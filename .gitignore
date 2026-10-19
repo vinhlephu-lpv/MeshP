@@ -1,0 +1,32 @@
+# Python virtual environment & caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# Node / Frontend dependencies & packaging artifacts
+frontend/node_modules/
+node_modules/
+frontend/release/
+*.log
+
+# Generated 3D outputs & temporary heavy meshes
+data/outputs/
+*.ply
+*.ckpt
+*.safetensors
+*.pt
+*.pth
+
+# Third-party demo assets/examples (not needed at runtime)
+backend/third_party/Hunyuan3D-2/assets/
+backend/third_party/Hunyuan3D-2/docs/
+backend/third_party/TripoSR/examples/
+
+# OS / IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
