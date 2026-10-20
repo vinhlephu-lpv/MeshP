@@ -1,8 +1,8 @@
-"""Image -> 3D mesh supporting multiple selectable engines:
-- hunyuan3d_mini:    Tencent Hunyuan3D-2mini-Turbo (0.6B, octree 256, 10 steps, ~2.4 GB VRAM)
-- hunyuan3d_mini_hq: Tencent Hunyuan3D-2mini-Turbo (0.6B, octree 384, 18 steps, ~3.2 GB VRAM)
-- hunyuan3d_full:    Tencent Hunyuan3D-2.0-Turbo   (1.1B, octree 384, 16 steps, ~4.5 GB VRAM)
-- triposr:           StabilityAI TripoSR           (Fast fallback, ~1.8 GB VRAM)
+"""Image -> 3D mesh supporting character-optimized 3072-latent engines & IS-Net segmentation:
+- hunyuan3d_char:    Tencent Hunyuan3D-2.0 Full 1.1B (3,072 latents, octree 384, 18 steps)
+- hunyuan3d_mini_hq: Tencent Hunyuan3D-2mini 0.6B    (3,072 latents via replace_vae=False, octree 384, 18 steps)
+- hunyuan3d_mini:    Tencent Hunyuan3D-2mini 0.6B    (512 latents fast mode, octree 256, 10 steps)
+- triposr:           StabilityAI TripoSR             (Fast fallback)
 """
 from __future__ import annotations
 
@@ -78,7 +78,8 @@ from tsr.utils import remove_background, resize_foreground  # noqa: E402
 # ---------------------------------------------------------------------------
 # Model loaders registered with ModelManager
 # ---------------------------------------------------------------------------
-def _load_hunyuan3d_mini():
+def _load_hunyuan3d_mini_fast():
+    """0.6B model with 512-latent turbo VAE (fastest, best for simple fruits/props)."""
     from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
     dtype = torch.float16 if DEVICE == "cuda" else torch.float32
@@ -89,11 +90,28 @@ def _load_hunyuan3d_mini():
         device="cpu",
         dtype=dtype,
     )
-    pipe.enable_flashvdm(mc_algo="mc")
+    pipe.enable_flashvdm(mc_algo="mc", replace_vae=True)
+    return pipe
+
+
+def _load_hunyuan3d_mini_3072():
+    """0.6B model keeping bundled 3,072-latent VAE (6x more detail for characters/limbs)."""
+    from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
+
+    dtype = torch.float16 if DEVICE == "cuda" else torch.float32
+    pipe = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+        HUNYUAN3D_MODEL_ID,
+        subfolder=HUNYUAN3D_SUBFOLDER,
+        use_safetensors=True,
+        device="cpu",
+        dtype=dtype,
+    )
+    pipe.enable_flashvdm(mc_algo="mc", replace_vae=False)
     return pipe
 
 
 def _load_hunyuan3d_full():
+    """1.1B Full model with 3,072-latent turbo VAE (highest anatomical & geometric quality)."""
     from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
     dtype = torch.float16 if DEVICE == "cuda" else torch.float32
@@ -104,7 +122,7 @@ def _load_hunyuan3d_full():
         device="cpu",
         dtype=dtype,
     )
-    pipe.enable_flashvdm(mc_algo="mc")
+    pipe.enable_flashvdm(mc_algo="mc", replace_vae=True)
     return pipe
 
 
@@ -120,19 +138,24 @@ def _load_triposr():
     return model
 
 
-manager.register("hunyuan3d", _load_hunyuan3d_mini)
-manager.register("hunyuan3d_mini", _load_hunyuan3d_mini)
+manager.register("hunyuan3d", _load_hunyuan3d_mini_fast)
+manager.register("hunyuan3d_mini", _load_hunyuan3d_mini_fast)
+manager.register("hunyuan3d_mini_hq", _load_hunyuan3d_mini_3072)
 manager.register("hunyuan3d_full", _load_hunyuan3d_full)
+manager.register("hunyuan3d_char", _load_hunyuan3d_full)
 manager.register("triposr", _load_triposr)
 
 _rembg_session = None
 
 
 def prepare_image(image: Image.Image, foreground_ratio: float = 0.85) -> Image.Image:
-    """Remove background and center object as an RGBA image."""
+    """Remove background using high-precision IS-Net (cached on C:) for clean character limbs/hair."""
     global _rembg_session
     if _rembg_session is None:
-        _rembg_session = rembg.new_session("u2net", providers=["CPUExecutionProvider"])
+        try:
+            _rembg_session = rembg.new_session("isnet-general-use", providers=["CPUExecutionProvider"])
+        except Exception:
+            _rembg_session = rembg.new_session("u2net", providers=["CPUExecutionProvider"])
     img = remove_background(image.convert("RGB"), _rembg_session)
     img = resize_foreground(img, foreground_ratio)
     return img.convert("RGBA")
@@ -146,32 +169,32 @@ def _rgba_to_grey_rgb(image: Image.Image) -> Image.Image:
 
 
 def colorize_mesh_from_rgba(mesh: trimesh.Trimesh, prepared_rgba: Image.Image) -> trimesh.Trimesh:
-    """Project clean interior foreground colors from the RGBA input onto the 3D mesh."""
+    """Project 2D colors onto the 3D mesh with 1:1 silhouette alignment so character limbs & face align."""
     rgba = np.asarray(prepared_rgba.convert("RGBA"))
     rgb = rgba[..., :3].astype(np.float32) / 255.0
     alpha = rgba[..., 3].astype(np.float32) / 255.0
 
-    # Erode valid color mask by 4px to strip any dark/grey anti-aliased edge halo
-    fg_color = binary_erosion((alpha > 0.85) & (rgb.max(axis=-1) > 0.06), iterations=4)
+    # Erode valid color mask by 2px so thin character fingers/limbs retain their colors while stripping edge halo
+    fg_color = binary_erosion((alpha > 0.80) & (rgb.max(axis=-1) > 0.05), iterations=2)
     if not fg_color.any():
         fg_color = alpha > 0.5
     if not fg_color.any():
         fg_color = np.ones_like(alpha, dtype=bool)
 
-    # Fill exterior with nearest interior foreground pixel
+    # Fill exterior (and gaps between arms/legs) with nearest valid interior foreground pixel
     _, (iy, ix) = distance_transform_edt(~fg_color, return_indices=True)
     rgb_filled = rgb[iy, ix]
 
-    # Soften harsh white specular glare while preserving hue and fine detail
+    # Soften harsh white specular glare while keeping facial/clothing detail crisp
     max_c = rgb_filled.max(axis=-1, keepdims=True)
     min_c = rgb_filled.min(axis=-1, keepdims=True)
     sat = (max_c - min_c) / np.maximum(max_c, 1e-4)
-    glare = np.clip((max_c - 0.84) / 0.16, 0.0, 1.0) * np.clip((0.32 - sat) / 0.32, 0.0, 1.0)
+    glare = np.clip((max_c - 0.86) / 0.14, 0.0, 1.0) * np.clip((0.28 - sat) / 0.28, 0.0, 1.0)
     if glare.max() > 0:
-        blurred = gaussian_filter(rgb_filled, sigma=(10.0, 10.0, 0.0))
-        rgb_filled = rgb_filled * (1.0 - 0.60 * glare) + blurred * (0.60 * glare)
+        blurred = gaussian_filter(rgb_filled, sigma=(8.0, 8.0, 0.0))
+        rgb_filled = rgb_filled * (1.0 - 0.50 * glare) + blurred * (0.50 * glare)
 
-    rgb_filled = np.clip(gaussian_filter(rgb_filled, sigma=(0.8, 0.8, 0.0)), 0.0, 1.0)
+    rgb_filled = np.clip(gaussian_filter(rgb_filled, sigma=(0.5, 0.5, 0.0)), 0.0, 1.0)
 
     # Bounding box of geometric silhouette
     fg_box = alpha > 0.5
@@ -189,11 +212,11 @@ def colorize_mesh_from_rgba(mesh: trimesh.Trimesh, prepared_rgba: Image.Image) -
     u = (v[:, 0] - vmin[0]) / max(float(vmax[0] - vmin[0]), 1e-6)
     w = 1.0 - (v[:, 1] - vmin[1]) / max(float(vmax[1] - vmin[1]), 1e-6)
 
-    # Pull side-facing vertices slightly inward so profile edges sample rich interior color
-    inward_u = 0.86 + 0.12 * np.abs(vn[:, 2])
-    inward_w = 0.92 + 0.06 * np.abs(vn[:, 2])
-    u_in = np.clip(0.5 + (u - 0.5) * inward_u, 0.02, 0.98)
-    w_in = np.clip(0.5 + (w - 0.5) * inward_w, 0.02, 0.98)
+    # Local normal nudge (1.2% inward along the vertex's own normal) instead of global center pull
+    # so outstretched character arms, legs, eyes, and clothing align 1:1 with the 2D silhouette
+    side_factor = 1.0 - np.abs(vn[:, 2])
+    u_in = np.clip(u - vn[:, 0] * 0.015 * side_factor, 0.005, 0.995)
+    w_in = np.clip(w + vn[:, 1] * 0.015 * side_factor, 0.005, 0.995)
 
     px = np.clip((x0 + u_in * (x1 - x0)).astype(int), 0, rgb.shape[1] - 1)
     py = np.clip((y0 + w_in * (y1 - y0)).astype(int), 0, rgb.shape[0] - 1)
@@ -205,23 +228,20 @@ def colorize_mesh_from_rgba(mesh: trimesh.Trimesh, prepared_rgba: Image.Image) -
 
 def _hunyuan_image_to_mesh(
     prepared_rgba: Image.Image,
-    model_key: str = "hunyuan3d_mini",
-    steps: int = HUNYUAN3D_STEPS,
-    octree_resolution: int = HUNYUAN3D_OCTREE_RES,
-    max_facenum: int = 40000,
+    model_key: str = "hunyuan3d_char",
+    steps: int = 18,
+    octree_resolution: int = 384,
+    max_facenum: int = 250000,
     seed: int = 42,
 ) -> trimesh.Trimesh:
-    """Run Hunyuan3D (Mini 0.6B or Full 1.1B) with FlashVDM using sequential GPU staging."""
+    """Run Hunyuan3D (Full 1.1B 3072-latent or Mini 0.6B) with sequential GPU staging."""
     from hy3dgen.shapegen.pipelines import retrieve_timesteps
 
     try:
         pipe = manager.get(model_key)
     except Exception as e:
-        if model_key == "hunyuan3d_full":
-            print(f"[MeshStudio] Không nạp được hunyuan3d_full ({e}), tự động chuyển sang hunyuan3d_mini Ultra...", flush=True)
-            pipe = manager.get("hunyuan3d_mini")
-        else:
-            raise
+        print(f"[MeshStudio] Chuyển từ {model_key} sang hunyuan3d_mini_hq (3072 latents): {e}", flush=True)
+        pipe = manager.get("hunyuan3d_mini_hq")
 
     dev = torch.device(DEVICE)
     dtype = torch.float16 if DEVICE == "cuda" else torch.float32
@@ -230,7 +250,7 @@ def _hunyuan_image_to_mesh(
         prepared_rgba = prepare_image(prepared_rgba)
 
     with torch.inference_mode():
-        # Stage 1: Image conditioning (DINOv2)
+        # Stage 1: Image conditioning (DINOv2-giant)
         cond_in = pipe.prepare_image(prepared_rgba)
         im_t = cond_in.pop("image").to(dev, dtype=dtype)
         pipe.conditioner.to(dev, dtype=dtype)
@@ -252,7 +272,7 @@ def _hunyuan_image_to_mesh(
         timesteps, _ = retrieve_timesteps(pipe.scheduler, steps, dev, sigmas=sigmas)
         generator = torch.Generator(device=dev).manual_seed(seed)
         latents = pipe.prepare_latents(1, dtype, dev, generator)
-        guidance = torch.tensor([5.0], device=dev, dtype=dtype)
+        guidance = torch.tensor([5.5], device=dev, dtype=dtype)
         for t in timesteps:
             timestep = t.expand(1).to(dtype) / pipe.scheduler.config.num_train_timesteps
             v = pipe.model(latents, timestep, cond, guidance=guidance)
@@ -295,7 +315,6 @@ def _triposr_image_to_mesh(prepared_rgba: Image.Image, resolution: int = TRIPOSR
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    # Convert TripoSR (Z-up, +X front) to Unity (Y-up, +Z front)
     mesh.apply_transform(trimesh.transformations.rotation_matrix(-np.pi / 2, [1, 0, 0]))
     mesh.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
     mesh.apply_transform(trimesh.transformations.rotation_matrix(np.pi, [0, 1, 0]))
@@ -311,18 +330,18 @@ def image_to_mesh(
     eng = (engine or MESH_3D_ENGINE).lower()
     if eng == "triposr":
         return _triposr_image_to_mesh(prepared, resolution=resolution)
-    if eng == "hunyuan3d_full":
+    if eng in ("hunyuan3d_char", "hunyuan3d_full"):
         return _hunyuan_image_to_mesh(
             prepared,
             model_key="hunyuan3d_full",
-            steps=16,
+            steps=18,
             octree_resolution=384,
             max_facenum=250000,
         )
     if eng == "hunyuan3d_mini_hq":
         return _hunyuan_image_to_mesh(
             prepared,
-            model_key="hunyuan3d_mini",
+            model_key="hunyuan3d_mini_hq",
             steps=18,
             octree_resolution=384,
             max_facenum=250000,

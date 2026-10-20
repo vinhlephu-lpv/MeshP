@@ -67,6 +67,13 @@ def clean_mesh(mesh: trimesh.Trimesh, min_component_ratio: float) -> trimesh.Tri
             keep = [max(parts, key=lambda p: len(p.faces))]
         m = trimesh.util.concatenate(keep)
 
+    # Gentle Taubin smoothing: removes marching-cubes stair-steps (faces/limbs) without shrinking
+    if len(m.faces) >= 5000:
+        try:
+            trimesh.smoothing.filter_taubin(m, lamb=0.5, nu=-0.53, iterations=3)
+        except Exception:
+            pass
+
     trimesh.repair.fill_holes(m)
     trimesh.repair.fix_normals(m)
     return m
@@ -200,7 +207,11 @@ def build_flat_mesh(mesh: trimesh.Trimesh, labels: np.ndarray, texture: Image.Im
     verts = mesh.vertices[mesh.faces].reshape(-1, 3)
     faces = np.arange(len(verts)).reshape(-1, 3)
     uv = np.repeat(_cell_uv(labels), 3, axis=0)
-    normals = np.repeat(mesh.face_normals, 3, axis=0)
+    if len(mesh.faces) >= 3000:
+        # Smooth vertex normals for detailed meshes (characters look sculpted, not faceted)
+        normals = mesh.vertex_normals[mesh.faces].reshape(-1, 3)
+    else:
+        normals = np.repeat(mesh.face_normals, 3, axis=0)
 
     material = trimesh.visual.material.PBRMaterial(
         name=f"{name}_mat",

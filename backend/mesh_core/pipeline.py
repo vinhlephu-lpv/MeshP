@@ -16,7 +16,7 @@ from .config import MESH_3D_ENGINE, OUTPUT_DIR
 from .export import export_asset, render_thumbnail, render_turnaround
 from .model_manager import manager
 from .postprocess import PostprocessOptions, make_game_asset
-from .presets import PRESETS, build_prompt
+from .presets import build_prompt, get_preset
 
 ProgressFn = Callable[[str, float], None]
 
@@ -48,7 +48,7 @@ def image_to_asset(image: Image.Image, name: str, preset_key: str,
                    engine: str = MESH_3D_ENGINE) -> dict:
     from .image2mesh import image_to_mesh, prepare_image
 
-    preset = PRESETS[preset_key]
+    preset = get_preset(preset_key)
     if opts is None:
         opts = PostprocessOptions(
             target_faces=preset.target_faces,
@@ -72,6 +72,7 @@ def image_to_asset(image: Image.Image, name: str, preset_key: str,
         "hunyuan3d_mini": "Hunyuan3D-2 Mini Turbo (0.6B)",
         "hunyuan3d_mini_hq": "Hunyuan3D-2 Mini Ultra (384³)",
         "hunyuan3d_full": "Hunyuan3D-2.0 Full Turbo (1.1B)",
+        "hunyuan3d_char": "Hunyuan3D-2.0 Full 1.1B (Nhân vật)",
         "triposr": "TripoSR",
     }
     eng_label = engine_labels.get(engine, engine)

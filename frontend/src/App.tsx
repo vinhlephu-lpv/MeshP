@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+﻿import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls, Grid, Html, useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
@@ -29,6 +29,7 @@ interface Preset {
   target_faces: number
   palette_colors: number
   prompt_hint: string
+  custom?: boolean
 }
 
 interface AssetMeta {
@@ -104,47 +105,40 @@ interface EngineOption {
 
 const DEFAULT_ENGINES: EngineOption[] = [
   {
-    key: 'hunyuan3d_mini',
-    label: 'Hunyuan3D-2 Mini Turbo (0.6B)',
-    badge: 'Mặc định • 2.4GB VRAM',
-    desc: 'Nhanh (~15s), mượt, giữ nguyên tốc độ hiện tại (Lưới 256³, 10 bước).',
+    key: 'hunyuan3d_char',
+    label: 'Hunyuan3D-2.0 Full 1.1B • Chuyên Nhân Vật & Chi Tiết (3072 Latents)',
+    badge: 'Đẹp nhất • Nhân vật / Người',
+    desc: 'Dùng 3,072 Latents (gấp 6 lần chi tiết) + tách nền IS-Net + Lưới 384³ (~40s). Tối ưu cho người, nhân vật, con vật.',
   },
   {
     key: 'hunyuan3d_mini_hq',
-    label: 'Hunyuan3D-2 Mini Ultra (0.6B • 384³)',
-    badge: 'Nét gấp đôi • 3.2GB VRAM',
-    desc: 'Tăng độ phân giải khối lên 384³ & 18 bước (~28s), chi tiết sắc hơn.',
+    label: 'Hunyuan3D-2 Mini Ultra (0.6B • 3072 Latents • 384³)',
+    badge: 'Nét cao & Nhẹ • 3.2GB VRAM',
+    desc: 'Bản 0.6B nhưng mở khóa 3,072 Latents gốc + Lưới 384³ (~25s).',
   },
   {
-    key: 'hunyuan3d_full',
-    label: 'Hunyuan3D-2.0 Full Turbo (1.1B • Mạnh nhất)',
-    badge: 'Siêu nét • 4.5–6GB VRAM',
-    desc: 'Model 1.1 tỷ tham số lớn gấp đôi + Lưới 384³ & 16 bước (~35s).',
+    key: 'hunyuan3d_mini',
+    label: 'Hunyuan3D-2 Mini Turbo (0.6B • 512 Latents)',
+    badge: 'Nhanh • Trái cây / Đồ vật',
+    desc: 'Nhanh (~14s, 2.4GB VRAM, Lưới 256³). Phù hợp cho trái cây, rau củ, đồ vật đơn giản.',
   },
   {
     key: 'triposr',
     label: 'TripoSR (Dự phòng siêu tốc)',
-    badge: 'Nhẹ • 1.8GB VRAM',
+    badge: 'Siêu tốc ~5s',
     desc: 'Model NeRF nhẹ dự phòng (~5s).',
   },
 ]
 
 const DEFAULT_PRESETS: Preset[] = [
-  { key: 'crop', label: 'Cây trồng / rau củ', target_height_m: 0.4, target_faces: 1600, palette_colors: 32, prompt_hint: 'single stylized vegetable crop, plump clean shape' },
-  { key: 'fruit', label: 'Trái cây / nông sản', target_height_m: 0.25, target_faces: 1600, palette_colors: 32, prompt_hint: 'single fresh stylized fruit, plump rounded shape' },
-  { key: 'tree', label: 'Cây lớn', target_height_m: 4.0, target_faces: 3500, palette_colors: 40, prompt_hint: 'single stylized low-poly farm tree, thick trunk, chunky foliage' },
-  { key: 'animal', label: 'Con vật', target_height_m: 1.2, target_faces: 5000, palette_colors: 48, prompt_hint: 'single cute stylized farm animal, full body, standing, four legs visible' },
-  { key: 'building', label: 'Nhà / chuồng trại', target_height_m: 4.0, target_faces: 5000, palette_colors: 48, prompt_hint: 'single cute miniature farm building, isometric front-three-quarter view' },
-  { key: 'tool', label: 'Dụng cụ', target_height_m: 1.0, target_faces: 2200, palette_colors: 32, prompt_hint: 'single stylized farm tool prop, thick sturdy proportions' },
-  { key: 'prop', label: 'Đồ vật trang trí', target_height_m: 1.0, target_faces: 2800, palette_colors: 36, prompt_hint: 'single stylized farm prop object, clean solid silhouette' },
-  { key: 'character', label: 'Nhân vật', target_height_m: 1.7, target_faces: 7000, palette_colors: 64, prompt_hint: 'single cute chibi farm character, full body, standing, A-pose' },
+  { key: 'default', label: 'Mặc định', target_height_m: 1.0, target_faces: 10000, palette_colors: 128, prompt_hint: 'single stylized 3d game model, clean well-defined proportions' },
 ]
 
 export default function App() {
   const [presets, setPresets] = useState<Preset[]>(DEFAULT_PRESETS)
   const [engines, setEngines] = useState<EngineOption[]>(DEFAULT_ENGINES)
-  const [selectedEngine, setSelectedEngine] = useState<string>('hunyuan3d_mini')
-  const [selectedPreset, setSelectedPreset] = useState<string>('animal')
+  const [selectedEngine, setSelectedEngine] = useState<string>('hunyuan3d_char')
+  const [selectedPreset, setSelectedPreset] = useState<string>('default')
   const [mode, setMode] = useState<'text' | 'image'>('text')
 
   // Text to 2D state
@@ -160,10 +154,12 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   // Post-process options
-  const [targetFaces, setTargetFaces] = useState<number>(5000)
-  const [paletteColors, setPaletteColors] = useState<number>(48)
-  const [targetHeight, setTargetHeight] = useState<number>(1.2)
+  const [targetFaces, setTargetFaces] = useState<number>(10000)
+  const [paletteColors, setPaletteColors] = useState<number>(128)
+  const [targetHeight, setTargetHeight] = useState<number>(1.0)
   const [frontYaw, setFrontYaw] = useState<number>(0)
+  const [showAddPreset, setShowAddPreset] = useState<boolean>(false)
+  const [newPreset, setNewPreset] = useState({ label: '', target_height_m: 1.0, target_faces: 10000, palette_colors: 128 })
 
 
   // Viewer & Library state
@@ -198,6 +194,9 @@ export default function App() {
         }
         if (data.engines) {
           setEngines(data.engines)
+        }
+        if (data.default_engine) {
+          setSelectedEngine(data.default_engine)
         }
       })
       .catch(() => {})
@@ -236,6 +235,40 @@ export default function App() {
       setTargetHeight(item.options.target_height_m)
       setFrontYaw(item.options.front_yaw_deg || 0)
     }
+  }
+
+  async function handleAddPreset() {
+    if (!newPreset.label.trim()) return
+    try {
+      const r = await fetch(`${API_BASE}/api/presets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newPreset),
+      })
+      const data = await r.json()
+      if (data.presets) {
+        setPresets(data.presets)
+        const added = data.presets[data.presets.length - 1]
+        if (added) {
+          setSelectedPreset(added.key)
+          setTargetFaces(added.target_faces)
+          setPaletteColors(added.palette_colors)
+          setTargetHeight(added.target_height_m)
+        }
+      }
+      setShowAddPreset(false)
+      setNewPreset({ label: '', target_height_m: 1.0, target_faces: 10000, palette_colors: 128 })
+    } catch {
+      alert('Không thêm được loại asset (backend chưa chạy?)')
+    }
+  }
+
+  async function handleDeletePreset(key: string) {
+    if (!confirm('Xoá loại asset này?')) return
+    const r = await fetch(`${API_BASE}/api/presets/${key}`, { method: 'DELETE' })
+    const data = await r.json()
+    if (data.presets) setPresets(data.presets)
+    if (selectedPreset === key) handlePresetChange('default')
   }
 
   function handlePresetChange(key: string) {
@@ -360,15 +393,16 @@ export default function App() {
   }
 
   const quickExamples = [
-    { label: 'Bò sữa', text: 'a cute white and black dairy cow', preset: 'animal' },
-    { label: 'Gà mái', text: 'a cute fat brown hen chicken', preset: 'animal' },
-    { label: 'Cừu trắng', text: 'a fluffy cute white sheep', preset: 'animal' },
-    { label: 'Quả cà chua', text: 'a plump red tomato with green leaves on top', preset: 'fruit' },
-    { label: 'Cà rốt', text: 'a bright orange carrot with green leaves', preset: 'crop' },
-    { label: 'Bí ngô', text: 'a plump orange pumpkin', preset: 'crop' },
-    { label: 'Cây táo', text: 'a stylized low poly apple tree with red apples', preset: 'tree' },
-    { label: 'Nhà kho đỏ', text: 'a cute red wooden farm barn with white roof trim', preset: 'building' },
-    { label: 'Bình tưới cây', text: 'a green metal watering can', preset: 'tool' },
+    { label: 'Nhân vật nông dân', text: 'a cute stylized 3d farm character, full body standing in A-pose', preset: 'default' },
+    { label: 'Bò sữa', text: 'a cute white and black dairy cow', preset: 'default' },
+    { label: 'Gà mái', text: 'a cute fat brown hen chicken', preset: 'default' },
+    { label: 'Cừu trắng', text: 'a fluffy cute white sheep', preset: 'default' },
+    { label: 'Quả cà chua', text: 'a plump red tomato with green leaves on top', preset: 'default' },
+    { label: 'Cà rốt', text: 'a bright orange carrot with green leaves', preset: 'default' },
+    { label: 'Bí ngô', text: 'a plump orange pumpkin', preset: 'default' },
+    { label: 'Cây táo', text: 'a stylized low poly apple tree with red apples', preset: 'default' },
+    { label: 'Nhà kho đỏ', text: 'a cute red wooden farm barn with white roof trim', preset: 'default' },
+    { label: 'Bình tưới cây', text: 'a green metal watering can', preset: 'default' },
   ]
 
   return (
@@ -382,7 +416,7 @@ export default function App() {
           <div>
             <span className="font-bold tracking-tight text-white">MESH STUDIO</span>
             <span className="ml-2 text-xs px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-              Hunyuan3D-2mini Turbo • Unity Farm • 4GB VRAM
+              Hunyuan3D-2 • Unity Farm
             </span>
           </div>
         </div>
@@ -475,33 +509,81 @@ export default function App() {
           {/* Preset Selector: Interactive 2-Column Visual Grid */}
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              Loại Asset Nông Trại (tự chỉnh kích thước Unity & số đa giác)
+              Loại Asset
             </label>
-            <div className="grid grid-cols-2 gap-1.5">
+            <div className="flex flex-wrap gap-1.5">
               {presets.map((p) => {
                 const active = selectedPreset === p.key
                 return (
-                  <button
-                    key={p.key}
-                    type="button"
-                    onClick={() => handlePresetChange(p.key)}
-                    className={`text-left px-2.5 py-1.5 rounded-lg border transition flex flex-col ${
-                      active
-                        ? 'border-emerald-500 bg-emerald-500/15 text-white shadow-sm'
-                        : 'border-slate-800 bg-slate-950/70 text-slate-300 hover:border-slate-700 hover:bg-slate-900'
-                    }`}
-                  >
-                    <span className="text-xs font-semibold truncate flex items-center justify-between">
-                      <span>{p.label}</span>
-                      {active && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />}
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-mono">
-                      cao {p.target_height_m}m • {p.target_faces} tris • {p.palette_colors} màu
-                    </span>
-                  </button>
+                  <div key={p.key} className="relative group">
+                    <button
+                      type="button"
+                      onClick={() => handlePresetChange(p.key)}
+                      title={`cao ${p.target_height_m}m • ${p.target_faces} tris • ${p.palette_colors} màu`}
+                      className={`text-left px-2.5 py-1.5 rounded-lg border transition flex flex-col ${
+                        active
+                          ? 'border-emerald-500 bg-emerald-500/15 text-white shadow-sm'
+                          : 'border-slate-800 bg-slate-950/70 text-slate-300 hover:border-slate-700 hover:bg-slate-900'
+                      }`}
+                    >
+                      <span className="text-xs font-semibold">{p.label}</span>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {p.target_height_m}m • {p.target_faces} tris • {p.palette_colors} màu
+                      </span>
+                    </button>
+                    {p.custom && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeletePreset(p.key)}
+                        className="absolute -top-1.5 -right-1.5 hidden group-hover:flex w-4 h-4 items-center justify-center rounded-full bg-red-600 text-white text-[10px]"
+                        title="Xoá"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
                 )
               })}
+              <button
+                type="button"
+                onClick={() => setShowAddPreset((v) => !v)}
+                className="px-3 py-1.5 rounded-lg border border-dashed border-slate-600 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 text-xs font-semibold"
+              >
+                + Thêm
+              </button>
             </div>
+            {showAddPreset && (
+              <div className="mt-2 p-2 rounded-lg border border-slate-700 bg-slate-950/70 grid grid-cols-2 gap-1.5 text-[11px]">
+                <input
+                  className="col-span-2 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white"
+                  placeholder="Tên loại (vd: Con vật)"
+                  value={newPreset.label}
+                  onChange={(e) => setNewPreset({ ...newPreset, label: e.target.value })}
+                />
+                <label className="text-slate-400">Cao (m)
+                  <input type="number" step="0.1" min="0.05" className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white"
+                    value={newPreset.target_height_m}
+                    onChange={(e) => setNewPreset({ ...newPreset, target_height_m: Number(e.target.value) })} />
+                </label>
+                <label className="text-slate-400">Số tris
+                  <input type="number" step="500" min="200" max="200000" className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white"
+                    value={newPreset.target_faces}
+                    onChange={(e) => setNewPreset({ ...newPreset, target_faces: Number(e.target.value) })} />
+                </label>
+                <label className="text-slate-400">Số màu
+                  <input type="number" step="8" min="4" max="1024" className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white"
+                    value={newPreset.palette_colors}
+                    onChange={(e) => setNewPreset({ ...newPreset, palette_colors: Number(e.target.value) })} />
+                </label>
+                <button
+                  type="button"
+                  onClick={handleAddPreset}
+                  className="self-end bg-emerald-600 hover:bg-emerald-500 text-white rounded px-2 py-1 font-semibold"
+                >
+                  Lưu
+                </button>
+              </div>
+            )}
           </div>
 
           {mode === 'text' ? (
@@ -526,10 +608,9 @@ export default function App() {
                       type="button"
                       onClick={() => {
                         setSubject(ex.text)
-                        handlePresetChange(ex.preset)
                       }}
                       className={`text-[11px] px-2 py-0.5 rounded border transition ${
-                        subject === ex.text && selectedPreset === ex.preset
+                        subject === ex.text
                           ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
                           : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
                       }`}

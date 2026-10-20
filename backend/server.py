@@ -30,7 +30,7 @@ from mesh_core.config import DEVICE, ENGINES_3D, MESH_3D_ENGINE, OUTPUT_DIR
 from mesh_core.model_manager import manager
 from mesh_core.pipeline import image_to_asset, reprocess_asset, text_to_images
 from mesh_core.postprocess import PostprocessOptions
-from mesh_core.presets import PRESETS, build_prompt
+from mesh_core.presets import build_prompt, delete_custom_preset, get_preset, load_all_presets, save_custom_preset
 
 app = FastAPI(title="Mesh – Farm Game 3D Asset Studio")
 
@@ -120,10 +120,29 @@ def get_presets():
     return {
         "device": DEVICE,
         "vram": manager.vram_report(),
-        "presets": [asdict(p) for p in PRESETS.values()],
+        "presets": [asdict(p) for p in load_all_presets().values()],
         "engines": ENGINES_3D,
         "default_engine": MESH_3D_ENGINE,
     }
+
+
+class NewPresetReq(BaseModel):
+    label: str
+    target_height_m: float = 1.0
+    target_faces: int = 10000
+    palette_colors: int = 128
+    prompt_hint: str = "single stylized 3d game asset"
+
+
+@app.post("/api/presets")
+def api_add_preset(req: NewPresetReq):
+    return {"presets": save_custom_preset(req.label, req.target_height_m, req.target_faces,
+                                          req.palette_colors, req.prompt_hint)}
+
+
+@app.delete("/api/presets/{key}")
+def api_delete_preset(key: str):
+    return {"presets": delete_custom_preset(key)}
 
 
 @app.get("/api/status")
@@ -139,15 +158,13 @@ def get_status():
 
 class GenerateImagesReq(BaseModel):
     subject: str
-    preset: str = "animal"
+    preset: str = "default"
     num_images: int = 2
     seed: Optional[int] = None
 
 
 @app.post("/api/generate/images")
 def api_generate_images(req: GenerateImagesReq):
-    if req.preset not in PRESETS:
-        raise HTTPException(400, f"Unknown preset: {req.preset}")
     if not _gpu_lock.acquire(blocking=False):
         raise HTTPException(409, "GPU đang xử lý tác vụ khác, vui lòng đợi.")
     try:
@@ -170,7 +187,7 @@ def api_generate_images(req: GenerateImagesReq):
 class GenerateAssetFromDataReq(BaseModel):
     image_data_url: str
     name: str
-    preset: str = "animal"
+    preset: str = "default"
     engine: str = MESH_3D_ENGINE
     target_faces: Optional[int] = None
     palette_colors: Optional[int] = None
@@ -180,13 +197,11 @@ class GenerateAssetFromDataReq(BaseModel):
 
 @app.post("/api/generate/asset")
 def api_generate_asset(req: GenerateAssetFromDataReq):
-    if req.preset not in PRESETS:
-        raise HTTPException(400, f"Unknown preset: {req.preset}")
     if not _gpu_lock.acquire(blocking=False):
         raise HTTPException(409, "GPU đang xử lý tác vụ khác, vui lòng đợi.")
     try:
         state.start("Chuẩn bị dựng 3D...")
-        preset = PRESETS[req.preset]
+        preset = get_preset(req.preset)
         opts = PostprocessOptions(
             target_faces=req.target_faces or preset.target_faces,
             palette_colors=req.palette_colors or preset.palette_colors,
@@ -215,14 +230,12 @@ def api_generate_asset(req: GenerateAssetFromDataReq):
 def api_generate_upload(
     file: UploadFile = File(...),
     name: str = Form("uploaded_asset"),
-    preset: str = Form("prop"),
+    preset: str = Form("default"),
     engine: str = Form(MESH_3D_ENGINE),
     target_faces: Optional[int] = Form(None),
     palette_colors: Optional[int] = Form(None),
     target_height_m: Optional[float] = Form(None),
 ):
-    if preset not in PRESETS:
-        raise HTTPException(400, f"Unknown preset: {preset}")
     raw = file.file.read()
     img = Image.open(io.BytesIO(raw)).convert("RGB")
 
@@ -230,7 +243,7 @@ def api_generate_upload(
         raise HTTPException(409, "GPU đang xử lý tác vụ khác, vui lòng đợi.")
     try:
         state.start("Chuẩn bị dựng 3D từ ảnh tải lên...")
-        p = PRESETS[preset]
+        p = get_preset(preset)
         opts = PostprocessOptions(
             target_faces=target_faces or p.target_faces,
             palette_colors=palette_colors or p.palette_colors,
