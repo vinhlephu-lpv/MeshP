@@ -23,6 +23,7 @@ from huggingface_hub import file_download, hf_hub_download  # noqa: E402
 from mesh_core.config import TEXT2IMG_MODEL_ID, TRIPOSR_MODEL_ID  # noqa: E402
 
 HUNYUAN_MINI_ID = "tencent/Hunyuan3D-2mini"
+HUNYUAN_FULL_ID = "tencent/Hunyuan3D-2"
 
 
 def _install_curl_http_get() -> None:
@@ -40,11 +41,11 @@ def _install_curl_http_get() -> None:
         temp_file.close()
         cmd = [
             "curl.exe", "-L", "--fail", "--retry", "5", "--retry-delay", "2",
-            "-C", "-", "-o", str(path),
+            "-A", "Mozilla/5.0", "-o", str(path),
         ]
         if headers:
             for k, v in headers.items():
-                if k.lower() != "range":
+                if k.lower() == "authorization":
                     cmd += ["-H", f"{k}: {v}"]
         cmd.append(url)
         mb = f"{expected_size / (1024*1024):.1f} MB" if expected_size else "unknown size"
@@ -85,20 +86,32 @@ HUNYUAN_FILES = [
     "hunyuan3d-vae-v2-mini-turbo/model.fp16.safetensors",
 ]
 
+HUNYUAN_FULL_FILES = [
+    "hunyuan3d-dit-v2-0-turbo/config.yaml",
+    "hunyuan3d-dit-v2-0-turbo/model.fp16.safetensors",
+    "hunyuan3d-vae-v2-0-turbo/config.yaml",
+    "hunyuan3d-vae-v2-0-turbo/model.fp16.safetensors",
+]
+
 
 def main() -> None:
-    print(f"[1/3] Text-to-image: {TEXT2IMG_MODEL_ID}", flush=True)
+    print(f"[1/4] Text-to-image: {TEXT2IMG_MODEL_ID}", flush=True)
     for f in SD_FILES:
         hf_hub_download(repo_id=TEXT2IMG_MODEL_ID, filename=f)
 
-    print(f"[2/3] Image-to-3D (Nhanh): {TRIPOSR_MODEL_ID}", flush=True)
+    print(f"[2/4] Image-to-3D (Nhanh): {TRIPOSR_MODEL_ID}", flush=True)
     for f in TRIPOSR_FILES:
         hf_hub_download(repo_id=TRIPOSR_MODEL_ID, filename=f)
 
-    print(f"[3/3] Image-to-3D (Chất lượng cao): {HUNYUAN_MINI_ID}", flush=True)
+    print(f"[3/4] Image-to-3D (Hunyuan3D-2 Mini 0.6B): {HUNYUAN_MINI_ID}", flush=True)
     for f in HUNYUAN_FILES:
         print(f"  -> Kiểm tra / tải {f} ...", flush=True)
         hf_hub_download(repo_id=HUNYUAN_MINI_ID, filename=f)
+
+    print(f"[4/4] Image-to-3D (Hunyuan3D-2.0 Full 1.1B): {HUNYUAN_FULL_ID}", flush=True)
+    for f in HUNYUAN_FULL_FILES:
+        print(f"  -> Kiểm tra / tải {f} ...", flush=True)
+        hf_hub_download(repo_id=HUNYUAN_FULL_ID, filename=f)
 
     print("Hoàn tất tải toàn bộ model!", flush=True)
 

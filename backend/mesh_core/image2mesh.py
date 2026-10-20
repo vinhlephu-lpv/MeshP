@@ -1,6 +1,8 @@
-"""Image -> 3D mesh using Tencent Hunyuan3D-2mini-Turbo (+ FlashVDM) with TripoSR fallback.
-
-Optimized for 4 GB VRAM GPUs via sequential submodule staging (peak VRAM ~2.4 GB).
+"""Image -> 3D mesh supporting multiple selectable engines:
+- hunyuan3d_mini:    Tencent Hunyuan3D-2mini-Turbo (0.6B, octree 256, 10 steps, ~2.4 GB VRAM)
+- hunyuan3d_mini_hq: Tencent Hunyuan3D-2mini-Turbo (0.6B, octree 384, 18 steps, ~3.2 GB VRAM)
+- hunyuan3d_full:    Tencent Hunyuan3D-2.0-Turbo   (1.1B, octree 384, 16 steps, ~4.5 GB VRAM)
+- triposr:           StabilityAI TripoSR           (Fast fallback, ~1.8 GB VRAM)
 """
 from __future__ import annotations
 
@@ -18,6 +20,8 @@ from scipy.ndimage import binary_erosion, distance_transform_edt, gaussian_filte
 from .config import (
     DEVICE,
     HUNYUAN3D_DIR,
+    HUNYUAN3D_FULL_MODEL_ID,
+    HUNYUAN3D_FULL_SUBFOLDER,
     HUNYUAN3D_MODEL_ID,
     HUNYUAN3D_OCTREE_RES,
     HUNYUAN3D_STEPS,
@@ -74,15 +78,28 @@ from tsr.utils import remove_background, resize_foreground  # noqa: E402
 # ---------------------------------------------------------------------------
 # Model loaders registered with ModelManager
 # ---------------------------------------------------------------------------
-def _load_hunyuan3d():
+def _load_hunyuan3d_mini():
     from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
     dtype = torch.float16 if DEVICE == "cuda" else torch.float32
-    # Keep submodules on CPU initially; stage them to CUDA one at a time during inference
-    # so 4 GB VRAM GPUs never OOM (peak VRAM ~2.40 GB).
     pipe = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
         HUNYUAN3D_MODEL_ID,
         subfolder=HUNYUAN3D_SUBFOLDER,
+        use_safetensors=True,
+        device="cpu",
+        dtype=dtype,
+    )
+    pipe.enable_flashvdm(mc_algo="mc")
+    return pipe
+
+
+def _load_hunyuan3d_full():
+    from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
+
+    dtype = torch.float16 if DEVICE == "cuda" else torch.float32
+    pipe = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+        HUNYUAN3D_FULL_MODEL_ID,
+        subfolder=HUNYUAN3D_FULL_SUBFOLDER,
         use_safetensors=True,
         device="cpu",
         dtype=dtype,
@@ -103,7 +120,9 @@ def _load_triposr():
     return model
 
 
-manager.register("hunyuan3d", _load_hunyuan3d)
+manager.register("hunyuan3d", _load_hunyuan3d_mini)
+manager.register("hunyuan3d_mini", _load_hunyuan3d_mini)
+manager.register("hunyuan3d_full", _load_hunyuan3d_full)
 manager.register("triposr", _load_triposr)
 
 _rembg_session = None
@@ -127,11 +146,7 @@ def _rgba_to_grey_rgb(image: Image.Image) -> Image.Image:
 
 
 def colorize_mesh_from_rgba(mesh: trimesh.Trimesh, prepared_rgba: Image.Image) -> trimesh.Trimesh:
-    """Project clean interior foreground colors from the RGBA input onto the 3D mesh.
-
-    Uses morphological erosion + Euclidean distance transform so boundary/side vertices
-    never pick up dark anti-aliased silhouette fringes or background pixels.
-    """
+    """Project clean interior foreground colors from the RGBA input onto the 3D mesh."""
     rgba = np.asarray(prepared_rgba.convert("RGBA"))
     rgb = rgba[..., :3].astype(np.float32) / 255.0
     alpha = rgba[..., 3].astype(np.float32) / 255.0
@@ -147,16 +162,16 @@ def colorize_mesh_from_rgba(mesh: trimesh.Trimesh, prepared_rgba: Image.Image) -
     _, (iy, ix) = distance_transform_edt(~fg_color, return_indices=True)
     rgb_filled = rgb[iy, ix]
 
-    # Soften harsh white specular glare while preserving hue
+    # Soften harsh white specular glare while preserving hue and fine detail
     max_c = rgb_filled.max(axis=-1, keepdims=True)
     min_c = rgb_filled.min(axis=-1, keepdims=True)
     sat = (max_c - min_c) / np.maximum(max_c, 1e-4)
-    glare = np.clip((max_c - 0.82) / 0.18, 0.0, 1.0) * np.clip((0.35 - sat) / 0.35, 0.0, 1.0)
+    glare = np.clip((max_c - 0.84) / 0.16, 0.0, 1.0) * np.clip((0.32 - sat) / 0.32, 0.0, 1.0)
     if glare.max() > 0:
-        blurred = gaussian_filter(rgb_filled, sigma=(12.0, 12.0, 0.0))
-        rgb_filled = rgb_filled * (1.0 - 0.65 * glare) + blurred * (0.65 * glare)
+        blurred = gaussian_filter(rgb_filled, sigma=(10.0, 10.0, 0.0))
+        rgb_filled = rgb_filled * (1.0 - 0.60 * glare) + blurred * (0.60 * glare)
 
-    rgb_filled = np.clip(gaussian_filter(rgb_filled, sigma=(1.2, 1.2, 0.0)), 0.0, 1.0)
+    rgb_filled = np.clip(gaussian_filter(rgb_filled, sigma=(0.8, 0.8, 0.0)), 0.0, 1.0)
 
     # Bounding box of geometric silhouette
     fg_box = alpha > 0.5
@@ -190,14 +205,24 @@ def colorize_mesh_from_rgba(mesh: trimesh.Trimesh, prepared_rgba: Image.Image) -
 
 def _hunyuan_image_to_mesh(
     prepared_rgba: Image.Image,
+    model_key: str = "hunyuan3d_mini",
     steps: int = HUNYUAN3D_STEPS,
     octree_resolution: int = HUNYUAN3D_OCTREE_RES,
+    max_facenum: int = 40000,
     seed: int = 42,
 ) -> trimesh.Trimesh:
-    """Run Hunyuan3D-2mini-Turbo with FlashVDM using sequential GPU staging (< 2.5 GB VRAM)."""
+    """Run Hunyuan3D (Mini 0.6B or Full 1.1B) with FlashVDM using sequential GPU staging."""
     from hy3dgen.shapegen.pipelines import retrieve_timesteps
 
-    pipe = manager.get("hunyuan3d")
+    try:
+        pipe = manager.get(model_key)
+    except Exception as e:
+        if model_key == "hunyuan3d_full":
+            print(f"[MeshStudio] Không nạp được hunyuan3d_full ({e}), tự động chuyển sang hunyuan3d_mini Ultra...", flush=True)
+            pipe = manager.get("hunyuan3d_mini")
+        else:
+            raise
+
     dev = torch.device(DEVICE)
     dtype = torch.float16 if DEVICE == "cuda" else torch.float32
 
@@ -224,9 +249,7 @@ def _hunyuan_image_to_mesh(
         pipe.model.to(dev, dtype=dtype)
         pipe.device = dev
         sigmas = np.linspace(0, 1, steps)
-        timesteps, steps_actual = retrieve_timesteps(
-            pipe.scheduler, steps, dev, sigmas=sigmas
-        )
+        timesteps, _ = retrieve_timesteps(pipe.scheduler, steps, dev, sigmas=sigmas)
         generator = torch.Generator(device=dev).manual_seed(seed)
         latents = pipe.prepare_latents(1, dtype, dev, generator)
         guidance = torch.tensor([5.0], device=dev, dtype=dtype)
@@ -246,7 +269,7 @@ def _hunyuan_image_to_mesh(
             "trimesh",
             1.01,
             0.0,
-            25000,
+            max_facenum,
             octree_resolution,
             "mc",
             enable_pbar=False,
@@ -279,8 +302,35 @@ def _triposr_image_to_mesh(prepared_rgba: Image.Image, resolution: int = TRIPOSR
     return mesh
 
 
-def image_to_mesh(prepared: Image.Image, resolution: int = HUNYUAN3D_OCTREE_RES) -> trimesh.Trimesh:
+def image_to_mesh(
+    prepared: Image.Image,
+    resolution: int = HUNYUAN3D_OCTREE_RES,
+    engine: str = MESH_3D_ENGINE,
+) -> trimesh.Trimesh:
     """Returns a dense, vertex-coloured mesh in Unity frame (Y-up, front = +Z)."""
-    if MESH_3D_ENGINE.lower() == "triposr":
+    eng = (engine or MESH_3D_ENGINE).lower()
+    if eng == "triposr":
         return _triposr_image_to_mesh(prepared, resolution=resolution)
-    return _hunyuan_image_to_mesh(prepared, octree_resolution=resolution)
+    if eng == "hunyuan3d_full":
+        return _hunyuan_image_to_mesh(
+            prepared,
+            model_key="hunyuan3d_full",
+            steps=16,
+            octree_resolution=384,
+            max_facenum=55000,
+        )
+    if eng == "hunyuan3d_mini_hq":
+        return _hunyuan_image_to_mesh(
+            prepared,
+            model_key="hunyuan3d_mini",
+            steps=18,
+            octree_resolution=384,
+            max_facenum=50000,
+        )
+    return _hunyuan_image_to_mesh(
+        prepared,
+        model_key="hunyuan3d_mini",
+        steps=HUNYUAN3D_STEPS,
+        octree_resolution=resolution,
+        max_facenum=40000,
+    )

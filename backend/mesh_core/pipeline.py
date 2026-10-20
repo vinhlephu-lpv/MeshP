@@ -12,7 +12,7 @@ from typing import Callable, Optional
 import torch
 from PIL import Image
 
-from .config import OUTPUT_DIR
+from .config import MESH_3D_ENGINE, OUTPUT_DIR
 from .export import export_asset, render_thumbnail, render_turnaround
 from .model_manager import manager
 from .postprocess import PostprocessOptions, make_game_asset
@@ -44,7 +44,8 @@ def text_to_images(subject: str, preset_key: str, num_images: int = 4,
 
 def image_to_asset(image: Image.Image, name: str, preset_key: str,
                    opts: Optional[PostprocessOptions] = None,
-                   progress: ProgressFn = _noop) -> dict:
+                   progress: ProgressFn = _noop,
+                   engine: str = MESH_3D_ENGINE) -> dict:
     from .image2mesh import image_to_mesh, prepare_image
 
     preset = PRESETS[preset_key]
@@ -67,11 +68,19 @@ def image_to_asset(image: Image.Image, name: str, preset_key: str,
     prepared.save(out_dir / "prepared.png")
     timings["prepare_s"] = round(time.perf_counter() - t, 2)
 
+    engine_labels = {
+        "hunyuan3d_mini": "Hunyuan3D-2 Mini Turbo (0.6B)",
+        "hunyuan3d_mini_hq": "Hunyuan3D-2 Mini Ultra (384³)",
+        "hunyuan3d_full": "Hunyuan3D-2.0 Full Turbo (1.1B)",
+        "triposr": "TripoSR",
+    }
+    eng_label = engine_labels.get(engine, engine)
+
     t = time.perf_counter()
-    progress("Dựng hình 3D chất lượng cao (Hunyuan3D-2mini Turbo)", 20)
+    progress(f"Dựng hình 3D ({eng_label})", 20)
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
-    dense = image_to_mesh(prepared)
+    dense = image_to_mesh(prepared, engine=engine)
     dense.export(out_dir / "dense.ply")
     timings["hunyuan3d_s"] = round(time.perf_counter() - t, 2)
     vram = manager.vram_report()
@@ -89,7 +98,7 @@ def image_to_asset(image: Image.Image, name: str, preset_key: str,
     meta = {
         "id": out_dir.name,
         "name": name, "slug": slug, "preset": preset_key, "created": stamp,
-        "engine": "hunyuan3d",
+        "engine": engine,
         "options": asdict(opts), "stats": stats, "timings": timings, "vram": vram,
         "files": files, "dir": str(out_dir),
     }
@@ -111,7 +120,8 @@ def reprocess_asset(asset_id: str, opts: PostprocessOptions,
 
     meta = json.loads(meta_path.read_text("utf-8"))
     slug = meta.get("slug", "asset")
-    is_legacy = meta.get("engine") != "hunyuan3d" and "hunyuan3d_s" not in meta.get("timings", {})
+    eng = str(meta.get("engine", ""))
+    is_legacy = not eng.startswith("hunyuan3d") and eng != "triposr" and "hunyuan3d_s" not in meta.get("timings", {})
 
     t = time.perf_counter()
     progress("Đọc lưới gốc & tối ưu lại", 20)

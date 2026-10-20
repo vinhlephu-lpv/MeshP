@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
-from mesh_core.config import DEVICE, OUTPUT_DIR
+from mesh_core.config import DEVICE, ENGINES_3D, MESH_3D_ENGINE, OUTPUT_DIR
 from mesh_core.model_manager import manager
 from mesh_core.pipeline import image_to_asset, reprocess_asset, text_to_images
 from mesh_core.postprocess import PostprocessOptions
@@ -121,6 +121,8 @@ def get_presets():
         "device": DEVICE,
         "vram": manager.vram_report(),
         "presets": [asdict(p) for p in PRESETS.values()],
+        "engines": ENGINES_3D,
+        "default_engine": MESH_3D_ENGINE,
     }
 
 
@@ -169,6 +171,7 @@ class GenerateAssetFromDataReq(BaseModel):
     image_data_url: str
     name: str
     preset: str = "animal"
+    engine: str = MESH_3D_ENGINE
     target_faces: Optional[int] = None
     palette_colors: Optional[int] = None
     target_height_m: Optional[float] = None
@@ -191,7 +194,14 @@ def api_generate_asset(req: GenerateAssetFromDataReq):
             front_yaw_deg=req.front_yaw_deg,
         )
         img = _data_url_to_pil(req.image_data_url)
-        meta = image_to_asset(img, req.name or req.preset, req.preset, opts, progress=state.update)
+        meta = image_to_asset(
+            img,
+            req.name or req.preset,
+            req.preset,
+            opts,
+            progress=state.update,
+            engine=req.engine or MESH_3D_ENGINE,
+        )
         state.finish()
         return _enrich_meta(meta)
     except Exception as e:
@@ -206,6 +216,7 @@ def api_generate_upload(
     file: UploadFile = File(...),
     name: str = Form("uploaded_asset"),
     preset: str = Form("prop"),
+    engine: str = Form(MESH_3D_ENGINE),
     target_faces: Optional[int] = Form(None),
     palette_colors: Optional[int] = Form(None),
     target_height_m: Optional[float] = Form(None),
@@ -225,7 +236,14 @@ def api_generate_upload(
             palette_colors=palette_colors or p.palette_colors,
             target_height_m=target_height_m or p.target_height_m,
         )
-        meta = image_to_asset(img, name or Path(file.filename or "asset").stem, preset, opts, progress=state.update)
+        meta = image_to_asset(
+            img,
+            name or Path(file.filename or "asset").stem,
+            preset,
+            opts,
+            progress=state.update,
+            engine=engine or MESH_3D_ENGINE,
+        )
         state.finish()
         return _enrich_meta(meta)
     except Exception as e:

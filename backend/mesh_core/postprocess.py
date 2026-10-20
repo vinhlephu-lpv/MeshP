@@ -14,13 +14,13 @@ from scipy.cluster.vq import kmeans2
 from scipy.spatial import cKDTree
 
 PALETTE_CELL = 8          # pixels per colour cell in the palette texture
-PALETTE_GRID = 8          # 8x8 = up to 64 colours -> 64x64 px texture
+PALETTE_GRID = 16         # 16x16 = up to 256 colours -> 128x128 px texture
 
 
 @dataclass
 class PostprocessOptions:
-    target_faces: int = 2000
-    palette_colors: int = 12
+    target_faces: int = 3500
+    palette_colors: int = 36
     target_height_m: float = 1.0
     saturation_boost: float = 1.15
     min_component_ratio: float = 0.02   # drop floating bits smaller than 2% of faces
@@ -148,10 +148,14 @@ def quantize_colors(face_colors: np.ndarray, areas: np.ndarray, k: int, seed: in
     """k-means on face colours (area weighted by repetition). Returns palette, labels."""
     k = max(1, min(k, PALETTE_GRID * PALETTE_GRID, len(face_colors)))
     rng = np.random.default_rng(seed)
-    probs = areas / areas.sum()
-    sample_idx = rng.choice(len(face_colors), size=min(20000, len(face_colors) * 4), p=probs)
+    probs = areas / np.maximum(areas.sum(), 1e-12)
+    n_samples = min(60000, max(len(face_colors) * 6, k * 64))
+    sample_idx = rng.choice(len(face_colors), size=n_samples, p=probs)
     sample = face_colors[sample_idx].astype(np.float64)
-    palette, _ = kmeans2(sample, k, minit="++", seed=seed)
+    try:
+        palette, _ = kmeans2(sample, k, minit="++", seed=seed)
+    except Exception:
+        palette, _ = kmeans2(sample, k, minit="points", seed=seed)
     d = ((face_colors[:, None, :] - palette[None, :, :]) ** 2).sum(-1)
     labels = d.argmin(axis=1)
     used = np.unique(labels)                      # drop empty clusters

@@ -15,14 +15,14 @@ class AssetPreset:
 
 
 PRESETS: dict[str, AssetPreset] = {p.key: p for p in [
-    AssetPreset("crop",     "Cây trồng / rau củ", 0.4, 800,  12, "single stylized vegetable crop, plump clean shape"),
-    AssetPreset("fruit",    "Trái cây / nông sản", 0.25, 800, 12, "single fresh stylized fruit, plump rounded shape"),
-    AssetPreset("tree",     "Cây lớn",            4.0, 2000, 14, "single stylized low-poly farm tree, thick trunk, chunky foliage"),
-    AssetPreset("animal",   "Con vật",            1.2, 3000, 16, "single cute stylized farm animal, full body, standing, four legs visible"),
-    AssetPreset("building", "Nhà / chuồng trại",  4.0, 3000, 16, "single cute miniature farm building, isometric front-three-quarter view"),
-    AssetPreset("tool",     "Dụng cụ",            1.0, 1200, 12, "single stylized farm tool prop, thick sturdy proportions"),
-    AssetPreset("prop",     "Đồ vật trang trí",   1.0, 1500, 14, "single stylized farm prop object, clean solid silhouette"),
-    AssetPreset("character","Nhân vật",           1.7, 4000, 16, "single cute chibi farm character, full body, standing, A-pose"),
+    AssetPreset("crop",     "Cây trồng / rau củ", 0.4, 1600, 32, "single stylized vegetable crop, plump clean shape"),
+    AssetPreset("fruit",    "Trái cây / nông sản", 0.25, 1600, 32, "single fresh stylized fruit, plump rounded shape"),
+    AssetPreset("tree",     "Cây lớn",            4.0, 3500, 40, "single stylized low-poly farm tree, thick trunk, chunky foliage"),
+    AssetPreset("animal",   "Con vật",            1.2, 5000, 48, "single cute stylized farm animal, full body, standing, four legs visible"),
+    AssetPreset("building", "Nhà / chuồng trại",  4.0, 5000, 48, "single cute miniature farm building, isometric front-three-quarter view"),
+    AssetPreset("tool",     "Dụng cụ",            1.0, 2200, 32, "single stylized farm tool prop, thick sturdy proportions"),
+    AssetPreset("prop",     "Đồ vật trang trí",   1.0, 2800, 36, "single stylized farm prop object, clean solid silhouette"),
+    AssetPreset("character","Nhân vật",           1.7, 7000, 64, "single cute chibi farm character, full body, standing, A-pose"),
 ]}
 
 BASE_PROMPT = (

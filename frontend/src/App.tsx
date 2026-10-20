@@ -95,19 +95,55 @@ function GLBModel({
   return <primitive object={cloned} />
 }
 
+interface EngineOption {
+  key: string
+  label: string
+  badge: string
+  desc: string
+}
+
+const DEFAULT_ENGINES: EngineOption[] = [
+  {
+    key: 'hunyuan3d_mini',
+    label: 'Hunyuan3D-2 Mini Turbo (0.6B)',
+    badge: 'Mặc định • 2.4GB VRAM',
+    desc: 'Nhanh (~15s), mượt, giữ nguyên tốc độ hiện tại (Lưới 256³, 10 bước).',
+  },
+  {
+    key: 'hunyuan3d_mini_hq',
+    label: 'Hunyuan3D-2 Mini Ultra (0.6B • 384³)',
+    badge: 'Nét gấp đôi • 3.2GB VRAM',
+    desc: 'Tăng độ phân giải khối lên 384³ & 18 bước (~28s), chi tiết sắc hơn.',
+  },
+  {
+    key: 'hunyuan3d_full',
+    label: 'Hunyuan3D-2.0 Full Turbo (1.1B • Mạnh nhất)',
+    badge: 'Siêu nét • 4.5–6GB VRAM',
+    desc: 'Model 1.1 tỷ tham số lớn gấp đôi + Lưới 384³ & 16 bước (~35s).',
+  },
+  {
+    key: 'triposr',
+    label: 'TripoSR (Dự phòng siêu tốc)',
+    badge: 'Nhẹ • 1.8GB VRAM',
+    desc: 'Model NeRF nhẹ dự phòng (~5s).',
+  },
+]
+
 const DEFAULT_PRESETS: Preset[] = [
-  { key: 'crop', label: 'Cây trồng / rau củ', target_height_m: 0.4, target_faces: 800, palette_colors: 12, prompt_hint: 'single stylized vegetable crop, plump clean shape' },
-  { key: 'fruit', label: 'Trái cây / nông sản', target_height_m: 0.25, target_faces: 800, palette_colors: 12, prompt_hint: 'single fresh stylized fruit, plump rounded shape' },
-  { key: 'tree', label: 'Cây lớn', target_height_m: 4.0, target_faces: 2000, palette_colors: 14, prompt_hint: 'single stylized low-poly farm tree, thick trunk, chunky foliage' },
-  { key: 'animal', label: 'Con vật', target_height_m: 1.2, target_faces: 3000, palette_colors: 16, prompt_hint: 'single cute stylized farm animal, full body, standing, four legs visible' },
-  { key: 'building', label: 'Nhà / chuồng trại', target_height_m: 4.0, target_faces: 3000, palette_colors: 16, prompt_hint: 'single cute miniature farm building, isometric front-three-quarter view' },
-  { key: 'tool', label: 'Dụng cụ', target_height_m: 1.0, target_faces: 1200, palette_colors: 12, prompt_hint: 'single stylized farm tool prop, thick sturdy proportions' },
-  { key: 'prop', label: 'Đồ vật trang trí', target_height_m: 1.0, target_faces: 1500, palette_colors: 14, prompt_hint: 'single stylized farm prop object, clean solid silhouette' },
-  { key: 'character', label: 'Nhân vật', target_height_m: 1.7, target_faces: 4000, palette_colors: 16, prompt_hint: 'single cute chibi farm character, full body, standing, A-pose' },
+  { key: 'crop', label: 'Cây trồng / rau củ', target_height_m: 0.4, target_faces: 1600, palette_colors: 32, prompt_hint: 'single stylized vegetable crop, plump clean shape' },
+  { key: 'fruit', label: 'Trái cây / nông sản', target_height_m: 0.25, target_faces: 1600, palette_colors: 32, prompt_hint: 'single fresh stylized fruit, plump rounded shape' },
+  { key: 'tree', label: 'Cây lớn', target_height_m: 4.0, target_faces: 3500, palette_colors: 40, prompt_hint: 'single stylized low-poly farm tree, thick trunk, chunky foliage' },
+  { key: 'animal', label: 'Con vật', target_height_m: 1.2, target_faces: 5000, palette_colors: 48, prompt_hint: 'single cute stylized farm animal, full body, standing, four legs visible' },
+  { key: 'building', label: 'Nhà / chuồng trại', target_height_m: 4.0, target_faces: 5000, palette_colors: 48, prompt_hint: 'single cute miniature farm building, isometric front-three-quarter view' },
+  { key: 'tool', label: 'Dụng cụ', target_height_m: 1.0, target_faces: 2200, palette_colors: 32, prompt_hint: 'single stylized farm tool prop, thick sturdy proportions' },
+  { key: 'prop', label: 'Đồ vật trang trí', target_height_m: 1.0, target_faces: 2800, palette_colors: 36, prompt_hint: 'single stylized farm prop object, clean solid silhouette' },
+  { key: 'character', label: 'Nhân vật', target_height_m: 1.7, target_faces: 7000, palette_colors: 64, prompt_hint: 'single cute chibi farm character, full body, standing, A-pose' },
 ]
 
 export default function App() {
   const [presets, setPresets] = useState<Preset[]>(DEFAULT_PRESETS)
+  const [engines, setEngines] = useState<EngineOption[]>(DEFAULT_ENGINES)
+  const [selectedEngine, setSelectedEngine] = useState<string>('hunyuan3d_mini')
   const [selectedPreset, setSelectedPreset] = useState<string>('animal')
   const [mode, setMode] = useState<'text' | 'image'>('text')
 
@@ -124,8 +160,8 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   // Post-process options
-  const [targetFaces, setTargetFaces] = useState<number>(3000)
-  const [paletteColors, setPaletteColors] = useState<number>(16)
+  const [targetFaces, setTargetFaces] = useState<number>(5000)
+  const [paletteColors, setPaletteColors] = useState<number>(48)
   const [targetHeight, setTargetHeight] = useState<number>(1.2)
   const [frontYaw, setFrontYaw] = useState<number>(0)
 
@@ -159,6 +195,9 @@ export default function App() {
       .then((data) => {
         if (data.presets) {
           setPresets(data.presets)
+        }
+        if (data.engines) {
+          setEngines(data.engines)
         }
       })
       .catch(() => {})
@@ -234,6 +273,7 @@ export default function App() {
   async function handleBuild3DFromCandidate() {
     const imgUrl = candidateImages[selectedImageIdx]
     if (!imgUrl || status.busy) return
+    setStatus((s) => ({ ...s, busy: true, stage: 'Chuẩn bị dựng 3D...', percent: 5 }))
     try {
       const res = await fetch(`${API_BASE}/api/generate/asset`, {
         method: 'POST',
@@ -242,6 +282,7 @@ export default function App() {
           image_data_url: imgUrl,
           name: subject || selectedPreset,
           preset: selectedPreset,
+          engine: selectedEngine,
           target_faces: targetFaces,
           palette_colors: paletteColors,
           target_height_m: targetHeight,
@@ -265,6 +306,7 @@ export default function App() {
       fd.append('file', uploadFile)
       fd.append('name', uploadFile.name.replace(/\.[^.]+$/, ''))
       fd.append('preset', selectedPreset)
+      fd.append('engine', selectedEngine)
       fd.append('target_faces', String(targetFaces))
       fd.append('palette_colors', String(paletteColors))
       fd.append('target_height_m', String(targetHeight))
@@ -389,6 +431,45 @@ export default function App() {
               <ImageIcon className="w-3.5 h-3.5" />
               Tạo từ ảnh có sẵn
             </button>
+          </div>
+
+          {/* 3D AI Model Selector */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center justify-between">
+              <span>Chọn Model AI Dựng 3D</span>
+              <span className="text-[10px] text-emerald-400 font-mono">Tự động quản lý VRAM</span>
+            </label>
+            <div className="flex flex-col gap-1.5">
+              {engines.map((eng) => {
+                const active = selectedEngine === eng.key
+                return (
+                  <button
+                    key={eng.key}
+                    type="button"
+                    onClick={() => setSelectedEngine(eng.key)}
+                    className={`text-left px-2.5 py-1.5 rounded-lg border transition flex flex-col ${
+                      active
+                        ? 'border-emerald-500 bg-emerald-500/15 text-white shadow-sm'
+                        : 'border-slate-800 bg-slate-950/70 text-slate-300 hover:border-slate-700 hover:bg-slate-900'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-xs font-semibold truncate">{eng.label}</span>
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${
+                          active
+                            ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40'
+                            : 'bg-slate-800 text-slate-400'
+                        }`}
+                      >
+                        {eng.badge}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 mt-0.5 leading-snug">{eng.desc}</span>
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
           {/* Preset Selector: Interactive 2-Column Visual Grid */}
@@ -598,12 +679,17 @@ export default function App() {
               <input
                 type="range"
                 min={200}
-                max={8000}
-                step={100}
+                max={20000}
+                step={200}
                 value={targetFaces}
                 onChange={(e) => setTargetFaces(Number(e.target.value))}
                 className="w-full accent-emerald-500"
               />
+              <div className="flex justify-between text-[10px] text-slate-500 font-mono mt-0.5">
+                <span>200 (Siêu nhẹ)</span>
+                <span>5,000 (Chuẩn)</span>
+                <span>20,000 (Siêu mịn)</span>
+              </div>
             </div>
 
             <div>
@@ -616,12 +702,17 @@ export default function App() {
               <input
                 type="range"
                 min={4}
-                max={64}
-                step={1}
+                max={256}
+                step={4}
                 value={paletteColors}
                 onChange={(e) => setPaletteColors(Number(e.target.value))}
                 className="w-full accent-emerald-500"
               />
+              <div className="flex justify-between text-[10px] text-slate-500 font-mono mt-0.5">
+                <span>8 màu (Flat)</span>
+                <span>64 màu (Mịn)</span>
+                <span>256 màu (Chuyển sắc cao)</span>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
