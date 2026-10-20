@@ -317,7 +317,7 @@ def image_to_mesh(
             model_key="hunyuan3d_full",
             steps=16,
             octree_resolution=384,
-            max_facenum=55000,
+            max_facenum=250000,
         )
     if eng == "hunyuan3d_mini_hq":
         return _hunyuan_image_to_mesh(
@@ -325,12 +325,12 @@ def image_to_mesh(
             model_key="hunyuan3d_mini",
             steps=18,
             octree_resolution=384,
-            max_facenum=50000,
+            max_facenum=250000,
         )
     return _hunyuan_image_to_mesh(
         prepared,
         model_key="hunyuan3d_mini",
         steps=HUNYUAN3D_STEPS,
         octree_resolution=resolution,
-        max_facenum=40000,
+        max_facenum=250000,
     )

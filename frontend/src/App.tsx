@@ -674,21 +674,23 @@ export default function App() {
                 <span className="text-slate-300 flex items-center gap-1">
                   <Layers className="w-3.5 h-3.5 text-slate-400" /> Số mặt tam giác (Triangles)
                 </span>
-                <span className="font-mono text-emerald-400 font-semibold">{targetFaces} tris</span>
+                <span className="font-mono text-emerald-400 font-semibold">
+                  {targetFaces.toLocaleString('en-US')} tris
+                </span>
               </div>
               <input
                 type="range"
                 min={200}
-                max={20000}
-                step={200}
+                max={200000}
+                step={500}
                 value={targetFaces}
                 onChange={(e) => setTargetFaces(Number(e.target.value))}
                 className="w-full accent-emerald-500"
               />
               <div className="flex justify-between text-[10px] text-slate-500 font-mono mt-0.5">
-                <span>200 (Siêu nhẹ)</span>
-                <span>5,000 (Chuẩn)</span>
-                <span>20,000 (Siêu mịn)</span>
+                <span>200 (Low-Poly)</span>
+                <span>50,000 (Mịn cao)</span>
+                <span>200,000 (Tối đa)</span>
               </div>
             </div>
 
@@ -702,7 +704,7 @@ export default function App() {
               <input
                 type="range"
                 min={4}
-                max={256}
+                max={1024}
                 step={4}
                 value={paletteColors}
                 onChange={(e) => setPaletteColors(Number(e.target.value))}
@@ -710,8 +712,8 @@ export default function App() {
               />
               <div className="flex justify-between text-[10px] text-slate-500 font-mono mt-0.5">
                 <span>8 màu (Flat)</span>
-                <span>64 màu (Mịn)</span>
-                <span>256 màu (Chuyển sắc cao)</span>
+                <span>256 màu (Mịn)</span>
+                <span>1,024 màu (Tối đa)</span>
               </div>
             </div>
 

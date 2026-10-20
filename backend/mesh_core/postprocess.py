@@ -14,7 +14,7 @@ from scipy.cluster.vq import kmeans2
 from scipy.spatial import cKDTree
 
 PALETTE_CELL = 8          # pixels per colour cell in the palette texture
-PALETTE_GRID = 16         # 16x16 = up to 256 colours -> 128x128 px texture
+PALETTE_GRID = 32         # 32x32 = up to 1024 colours -> 256x256 px texture
 
 
 @dataclass
@@ -105,25 +105,34 @@ def _vertex_colors(mesh: trimesh.Trimesh) -> np.ndarray:
 
 
 def sample_face_colors(low: trimesh.Trimesh, dense: trimesh.Trimesh) -> np.ndarray:
-    """Average the dense mesh colours around a few points on every low-poly face."""
+    """Average the dense mesh colours around points on every low-poly face."""
     dense_colors = _vertex_colors(dense)
     tree = cKDTree(dense.vertices)
-    tri = low.triangles                                      # (F, 3, 3)
-    bary = np.array([[1 / 3, 1 / 3, 1 / 3],
-                     [0.6, 0.2, 0.2], [0.2, 0.6, 0.2], [0.2, 0.2, 0.6]], dtype=np.float64)
-    pts = np.einsum("sk,fkd->fsd", bary, tri).reshape(-1, 3)  # (F*4, 3)
-    dist, idx = tree.query(pts, k=6)
-    w = 1.0 / np.maximum(dist, 1e-6)
-    w /= w.sum(axis=1, keepdims=True)
-    col = (dense_colors[idx] * w[..., None]).sum(axis=1)
-    face_cols = col.reshape(len(low.faces), len(bary), 3).mean(axis=1)
+    if len(low.faces) > 25000:
+        # High-poly fast path: query face centroids directly
+        pts = low.triangles_center
+        dist, idx = tree.query(pts, k=3)
+        w = 1.0 / np.maximum(dist, 1e-6)
+        w /= w.sum(axis=1, keepdims=True)
+        face_cols = (dense_colors[idx] * w[..., None]).sum(axis=1).astype(np.float64)
+    else:
+        tri = low.triangles                                      # (F, 3, 3)
+        bary = np.array([[1 / 3, 1 / 3, 1 / 3],
+                         [0.6, 0.2, 0.2], [0.2, 0.6, 0.2], [0.2, 0.2, 0.6]], dtype=np.float64)
+        pts = np.einsum("sk,fkd->fsd", bary, tri).reshape(-1, 3)  # (F*4, 3)
+        dist, idx = tree.query(pts, k=6)
+        w = 1.0 / np.maximum(dist, 1e-6)
+        w /= w.sum(axis=1, keepdims=True)
+        col = (dense_colors[idx] * w[..., None]).sum(axis=1)
+        face_cols = col.reshape(len(low.faces), len(bary), 3).mean(axis=1)
 
     # Smooth colours across adjacent faces (bilateral-like weight by colour similarity)
     try:
         adj = low.face_adjacency
         if len(adj) > 0:
             f0, f1 = adj[:, 0], adj[:, 1]
-            for _ in range(2):
+            iters = 1 if len(low.faces) > 40000 else 2
+            for _ in range(iters):
                 diff = np.linalg.norm(face_cols[f0] - face_cols[f1], axis=1, keepdims=True)
                 sim = np.exp(-diff * 6.0)
                 acc = face_cols.copy()
@@ -138,29 +147,30 @@ def sample_face_colors(low: trimesh.Trimesh, dense: trimesh.Trimesh) -> np.ndarr
     return face_cols
 
 
-
 def _boost_saturation(rgb: np.ndarray, amount: float) -> np.ndarray:
     grey = rgb.mean(axis=1, keepdims=True)
     return np.clip(grey + (rgb - grey) * amount, 0.0, 1.0)
 
 
 def quantize_colors(face_colors: np.ndarray, areas: np.ndarray, k: int, seed: int = 0):
-    """k-means on face colours (area weighted by repetition). Returns palette, labels."""
+    """k-means on face colours + fast KDTree nearest-cluster lookup (supports up to 1024 colours & 200k faces)."""
     k = max(1, min(k, PALETTE_GRID * PALETTE_GRID, len(face_colors)))
     rng = np.random.default_rng(seed)
     probs = areas / np.maximum(areas.sum(), 1e-12)
-    n_samples = min(60000, max(len(face_colors) * 6, k * 64))
+    n_samples = min(50000, max(len(face_colors) * 2, k * 32))
     sample_idx = rng.choice(len(face_colors), size=n_samples, p=probs)
     sample = face_colors[sample_idx].astype(np.float64)
+    init_method = "++" if k <= 128 else "points"
     try:
-        palette, _ = kmeans2(sample, k, minit="++", seed=seed)
+        palette, _ = kmeans2(sample, k, iter=10, minit=init_method, seed=seed)
     except Exception:
-        palette, _ = kmeans2(sample, k, minit="points", seed=seed)
-    d = ((face_colors[:, None, :] - palette[None, :, :]) ** 2).sum(-1)
-    labels = d.argmin(axis=1)
+        palette, _ = kmeans2(sample, k, iter=8, minit="points", seed=seed)
+    _, labels = cKDTree(palette).query(face_colors, k=1)
+    labels = labels.astype(np.int32)
     used = np.unique(labels)                      # drop empty clusters
-    remap = {old: new for new, old in enumerate(used)}
-    return palette[used], np.vectorize(remap.get)(labels)
+    remap = np.zeros(len(palette), dtype=np.int32)
+    remap[used] = np.arange(len(used), dtype=np.int32)
+    return palette[used], remap[labels]
 
 
 # ---------------------------------------------------------------------------
