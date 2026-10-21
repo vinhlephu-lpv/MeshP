@@ -18,6 +18,10 @@ import {
   Ruler,
   RotateCw,
   Upload,
+  ChevronDown,
+  Check,
+  Plus,
+  X,
 } from 'lucide-react'
 
 const API_BASE = 'http://127.0.0.1:8765'
@@ -159,6 +163,31 @@ export default function App() {
   const [targetHeight, setTargetHeight] = useState<number>(1.0)
   const [frontYaw, setFrontYaw] = useState<number>(0)
   const [showAddPreset, setShowAddPreset] = useState<boolean>(false)
+  const [isEngineOpen, setIsEngineOpen] = useState<boolean>(false)
+  const [isPresetOpen, setIsPresetOpen] = useState<boolean>(false)
+  const [isExamplesOpen, setIsExamplesOpen] = useState<boolean>(false)
+  const [isParamsOpen, setIsParamsOpen] = useState<boolean>(true)
+
+  const engineDropdownRef = useRef<HTMLDivElement>(null)
+  const presetDropdownRef = useRef<HTMLDivElement>(null)
+  const examplesDropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      const target = event.target as Node
+      if (engineDropdownRef.current && !engineDropdownRef.current.contains(target)) {
+        setIsEngineOpen(false)
+      }
+      if (presetDropdownRef.current && !presetDropdownRef.current.contains(target)) {
+        setIsPresetOpen(false)
+      }
+      if (examplesDropdownRef.current && !examplesDropdownRef.current.contains(target)) {
+        setIsExamplesOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
   const [newPreset, setNewPreset] = useState({ label: '', target_height_m: 1.0, target_faces: 10000, palette_colors: 128 })
 
 
@@ -467,121 +496,202 @@ export default function App() {
             </button>
           </div>
 
-          {/* 3D AI Model Selector */}
-          <div>
+          {/* 3D AI Model Selector - Dropdown */}
+          <div className="relative" ref={engineDropdownRef}>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center justify-between">
-              <span>Chọn Model AI Dựng 3D</span>
-              <span className="text-[10px] text-emerald-400 font-mono">Tự động quản lý VRAM</span>
+              <span>Model AI Dựng 3D</span>
+              <span className="text-[10px] text-emerald-400 font-mono">Tự động VRAM</span>
             </label>
-            <div className="flex flex-col gap-1.5">
-              {engines.map((eng) => {
-                const active = selectedEngine === eng.key
-                return (
-                  <button
-                    key={eng.key}
-                    type="button"
-                    onClick={() => setSelectedEngine(eng.key)}
-                    className={`text-left px-2.5 py-1.5 rounded-lg border transition flex flex-col ${
-                      active
-                        ? 'border-emerald-500 bg-emerald-500/15 text-white shadow-sm'
-                        : 'border-slate-800 bg-slate-950/70 text-slate-300 hover:border-slate-700 hover:bg-slate-900'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="text-xs font-semibold truncate">{eng.label}</span>
-                      <span
-                        className={`text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0 ${
-                          active
-                            ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40'
-                            : 'bg-slate-800 text-slate-400'
-                        }`}
-                      >
-                        {eng.badge}
-                      </span>
-                    </div>
-                    <span className="text-[10px] text-slate-400 mt-0.5 leading-snug">{eng.desc}</span>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
+            <button
+              type="button"
+              onClick={() => {
+                setIsEngineOpen(!isEngineOpen)
+                setIsPresetOpen(false)
+                setIsExamplesOpen(false)
+              }}
+              className="w-full text-left px-3 py-2 rounded-lg border border-slate-800 bg-slate-950/90 hover:border-slate-700 hover:bg-slate-900/90 transition flex items-center justify-between gap-2 shadow-sm"
+            >
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="text-xs font-semibold text-white truncate">
+                  {engines.find((e) => e.key === selectedEngine) || engines[0]?.label || selectedEngine}
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                  {engines.find((e) => e.key === selectedEngine) || engines[0]?.badge}
+                </span>
+              </div>
+              <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform duration-200 ${isEngineOpen ? 'rotate-180 text-emerald-400' : ''}`} />
+            </button>
 
-          {/* Preset Selector: Interactive 2-Column Visual Grid */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              Loại Asset
-            </label>
-            <div className="flex flex-wrap gap-1.5">
-              {presets.map((p) => {
-                const active = selectedPreset === p.key
-                return (
-                  <div key={p.key} className="relative group">
+            {isEngineOpen && (
+              <div className="absolute top-full left-0 right-0 mt-1.5 z-40 bg-slate-900/95 border border-slate-700 rounded-xl shadow-2xl p-1.5 flex flex-col gap-1 backdrop-blur-md">
+                {engines.map((eng) => {
+                  const active = selectedEngine === eng.key
+                  return (
                     <button
+                      key={eng.key}
                       type="button"
-                      onClick={() => handlePresetChange(p.key)}
-                      title={`cao ${p.target_height_m}m • ${p.target_faces} tris • ${p.palette_colors} màu`}
-                      className={`text-left px-2.5 py-1.5 rounded-lg border transition flex flex-col ${
+                      onClick={() => {
+                        setSelectedEngine(eng.key)
+                        setIsEngineOpen(false)
+                      }}
+                      className={`text-left px-2.5 py-2 rounded-lg transition flex items-start justify-between gap-2 ${
                         active
-                          ? 'border-emerald-500 bg-emerald-500/15 text-white shadow-sm'
-                          : 'border-slate-800 bg-slate-950/70 text-slate-300 hover:border-slate-700 hover:bg-slate-900'
+                          ? 'bg-emerald-500/15 border border-emerald-500/40 text-white'
+                          : 'hover:bg-slate-800 text-slate-300 border border-transparent'
                       }`}
                     >
-                      <span className="text-xs font-semibold">{p.label}</span>
-                      <span className="text-[10px] text-slate-400 font-mono">
-                        {p.target_height_m}m • {p.target_faces} tris • {p.palette_colors} màu
-                      </span>
+                      <div className="flex flex-col min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-semibold text-white truncate">{eng.label}</span>
+                          <span className="text-[10px] px-1.5 py-0.2 rounded font-mono bg-slate-800 text-slate-300 border border-slate-700 shrink-0">
+                            {eng.badge}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 mt-0.5 leading-snug">{eng.desc}</span>
+                      </div>
+                      {active && <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />}
                     </button>
-                    {p.custom && (
-                      <button
-                        type="button"
-                        onClick={() => handleDeletePreset(p.key)}
-                        className="absolute -top-1.5 -right-1.5 hidden group-hover:flex w-4 h-4 items-center justify-center rounded-full bg-red-600 text-white text-[10px]"
-                        title="Xoá"
-                      >
-                        ×
-                      </button>
-                    )}
-                  </div>
-                )
-              })}
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Loại Asset - Dropdown + Thêm */}
+          <div className="relative" ref={presetDropdownRef}>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center justify-between">
+              <span>Loại Asset</span>
+              <span className="text-[10px] text-slate-400">Tự chỉnh kích thước & đa giác</span>
+            </label>
+            <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => setShowAddPreset((v) => !v)}
-                className="px-3 py-1.5 rounded-lg border border-dashed border-slate-600 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 text-xs font-semibold"
+                onClick={() => {
+                  setIsPresetOpen(!isPresetOpen)
+                  setIsEngineOpen(false)
+                  setIsExamplesOpen(false)
+                }}
+                className="flex-1 text-left px-3 py-2 rounded-lg border border-slate-800 bg-slate-950/90 hover:border-slate-700 hover:bg-slate-900/90 transition flex items-center justify-between gap-2 shadow-sm min-w-0"
               >
-                + Thêm
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs font-semibold text-white truncate">
+                    {presets.find((p) => p.key === selectedPreset) || presets[0]?.label || 'Mặc định'}
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-mono truncate">
+                    {presets.find((p) => p.key === selectedPreset) || presets[0]?.target_height_m}m • {presets.find((p) => p.key === selectedPreset) || presets[0]?.target_faces} tris • {presets.find((p) => p.key === selectedPreset) || presets[0]?.palette_colors} màu
+                  </span>
+                </div>
+                <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform duration-200 ${isPresetOpen ? 'rotate-180 text-emerald-400' : ''}`} />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddPreset((v) => !v)
+                  setIsPresetOpen(false)
+                }}
+                title="Thêm loại asset mới"
+                className={`px-2.5 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1 transition shrink-0 ${
+                  showAddPreset
+                    ? 'border-emerald-500 bg-emerald-500/20 text-emerald-300'
+                    : 'border-slate-800 bg-slate-950/90 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
+                }`}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Thêm</span>
               </button>
             </div>
+
+            {isPresetOpen && (
+              <div className="absolute top-full left-0 right-0 mt-1.5 z-40 bg-slate-900/95 border border-slate-700 rounded-xl shadow-2xl p-1.5 flex flex-col gap-1 backdrop-blur-md max-h-56 overflow-y-auto">
+                {presets.map((p) => {
+                  const active = selectedPreset === p.key
+                  return (
+                    <div
+                      key={p.key}
+                      className={`flex items-center justify-between px-2.5 py-2 rounded-lg transition ${
+                        active
+                          ? 'bg-emerald-500/15 border border-emerald-500/40 text-white'
+                          : 'hover:bg-slate-800 text-slate-300 border border-transparent'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handlePresetChange(p.key)
+                          setIsPresetOpen(false)
+                        }}
+                        className="flex-1 text-left flex items-center justify-between pr-2 min-w-0"
+                      >
+                        <span className="text-xs font-semibold text-white">{p.label}</span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {p.target_height_m}m • {p.target_faces} tris • {p.palette_colors} màu
+                        </span>
+                      </button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {active && <Check className="w-4 h-4 text-emerald-400" />}
+                        {p.custom && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDeletePreset(p.key)
+                            }}
+                            className="p-1 rounded hover:bg-rose-500/20 text-slate-400 hover:text-rose-400"
+                            title="Xoá loại này"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
             {showAddPreset && (
-              <div className="mt-2 p-2 rounded-lg border border-slate-700 bg-slate-950/70 grid grid-cols-2 gap-1.5 text-[11px]">
+              <div className="mt-2 p-2.5 rounded-xl border border-slate-700 bg-slate-950/95 grid grid-cols-2 gap-2 text-[11px] shadow-xl">
+                <div className="col-span-2 flex items-center justify-between text-xs font-semibold text-emerald-400">
+                  <span>Thêm loại asset mới</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddPreset(false)}
+                    className="text-slate-400 hover:text-white"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
                 <input
-                  className="col-span-2 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white"
-                  placeholder="Tên loại (vd: Con vật)"
+                  className="col-span-2 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-emerald-500"
+                  placeholder="Tên loại (vd: Cây trồng, Đồ vật...)"
                   value={newPreset.label}
                   onChange={(e) => setNewPreset({ ...newPreset, label: e.target.value })}
                 />
                 <label className="text-slate-400">Cao (m)
-                  <input type="number" step="0.1" min="0.05" className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white"
+                  <input type="number" step="0.1" min="0.05" className="w-full mt-0.5 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-white"
                     value={newPreset.target_height_m}
                     onChange={(e) => setNewPreset({ ...newPreset, target_height_m: Number(e.target.value) })} />
                 </label>
                 <label className="text-slate-400">Số tris
-                  <input type="number" step="500" min="200" max="200000" className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white"
+                  <input type="number" step="500" min="200" max="200000" className="w-full mt-0.5 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-white"
                     value={newPreset.target_faces}
                     onChange={(e) => setNewPreset({ ...newPreset, target_faces: Number(e.target.value) })} />
                 </label>
                 <label className="text-slate-400">Số màu
-                  <input type="number" step="8" min="4" max="1024" className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white"
+                  <input type="number" step="8" min="4" max="1024" className="w-full mt-0.5 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-white"
                     value={newPreset.palette_colors}
                     onChange={(e) => setNewPreset({ ...newPreset, palette_colors: Number(e.target.value) })} />
                 </label>
-                <button
-                  type="button"
-                  onClick={handleAddPreset}
-                  className="self-end bg-emerald-600 hover:bg-emerald-500 text-white rounded px-2 py-1 font-semibold"
-                >
-                  Lưu
-                </button>
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    onClick={handleAddPreset}
+                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-2 py-1.5 font-semibold transition text-xs shadow"
+                  >
+                    Lưu
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -600,24 +710,49 @@ export default function App() {
                   placeholder="Ví dụ: a cute white and black dairy cow"
                   className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
                 />
-                {/* Quick Chips */}
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {quickExamples.map((ex) => (
-                    <button
-                      key={ex.label}
-                      type="button"
-                      onClick={() => {
-                        setSubject(ex.text)
-                      }}
-                      className={`text-[11px] px-2 py-0.5 rounded border transition ${
-                        subject === ex.text
-                          ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
-                          : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
-                      }`}
-                    >
-                      + {ex.label}
-                    </button>
-                  ))}
+                {/* Quick Examples Dropdown */}
+                <div className="relative mt-2" ref={examplesDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsExamplesOpen(!isExamplesOpen)
+                      setIsEngineOpen(false)
+                      setIsPresetOpen(false)
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg border border-slate-800 bg-slate-950/70 hover:bg-slate-900 hover:border-slate-700 text-xs text-slate-300 flex items-center justify-between gap-1.5 transition"
+                  >
+                    <span className="flex items-center gap-1.5 text-slate-400 truncate">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span>Chọn mẫu mô tả gợi ý ({quickExamples.length} mẫu)...</span>
+                    </span>
+                    <ChevronDown className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform duration-200 ${isExamplesOpen ? 'rotate-180 text-emerald-400' : ''}`} />
+                  </button>
+
+                  {isExamplesOpen && (
+                    <div className="absolute top-full left-0 right-0 mt-1 z-30 bg-slate-900/95 border border-slate-700 rounded-xl shadow-2xl p-1 flex flex-col gap-0.5 backdrop-blur-md max-h-56 overflow-y-auto">
+                      {quickExamples.map((ex) => {
+                        const active = subject === ex.text
+                        return (
+                          <button
+                            key={ex.label}
+                            type="button"
+                            onClick={() => {
+                              setSubject(ex.text)
+                              setIsExamplesOpen(false)
+                            }}
+                            className={`text-left px-2.5 py-1.5 rounded-lg transition flex items-center justify-between gap-2 text-xs ${
+                              active
+                                ? 'bg-emerald-500/15 text-emerald-300 font-semibold'
+                                : 'hover:bg-slate-800 text-slate-300'
+                            }`}
+                          >
+                            <span className="font-medium shrink-0">+ {ex.label}</span>
+                            <span className="text-[10px] text-slate-500 italic truncate max-w-[170px]">{ex.text}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -741,16 +876,29 @@ export default function App() {
             </div>
           )}
 
-          {/* Low-Poly & Unity Post-process Sliders */}
-          <div className="border-t border-slate-800 pt-4 mt-1 flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+          {/* Low-Poly & Unity Post-process Sliders - Collapsible */}
+          <div className="border-t border-slate-800 pt-3 mt-1 flex flex-col gap-2.5">
+            <button
+              type="button"
+              onClick={() => setIsParamsOpen(!isParamsOpen)}
+              className="w-full flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-400 hover:text-slate-200 transition py-0.5"
+            >
+              <span className="flex items-center gap-1.5">
                 <Sliders className="w-3.5 h-3.5 text-emerald-400" />
                 Thông số Low-Poly & Unity
               </span>
-            </div>
-
-            <div>
+              <div className="flex items-center gap-2">
+                {!isParamsOpen && (
+                  <span className="text-[10px] font-mono font-normal normal-case text-slate-500">
+                    {targetFaces.toLocaleString('en-US')} tris • {paletteColors} màu
+                  </span>
+                )}
+                <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${isParamsOpen ? 'rotate-180 text-emerald-400' : ''}`} />
+              </div>
+            </button>
+            {isParamsOpen && (
+              <>
+                <div>
               <div className="flex justify-between text-xs mb-1">
                 <span className="text-slate-300 flex items-center gap-1">
                   <Layers className="w-3.5 h-3.5 text-slate-400" /> Số mặt tam giác (Triangles)
@@ -836,6 +984,8 @@ export default function App() {
                 <RefreshCw className="w-3.5 h-3.5" />
                 Áp dụng ngay cho "{activeAsset.name}" (~1 giây, không chạy lại AI)
               </button>
+            )}
+              </>
             )}
           </div>
         </aside>
