@@ -1,4 +1,4 @@
-﻿import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls, Grid, Html, useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
@@ -142,7 +142,7 @@ const DEFAULT_PRESETS: Preset[] = [
 export default function App() {
   const [presets, setPresets] = useState<Preset[]>(DEFAULT_PRESETS)
   const [engines, setEngines] = useState<EngineOption[]>(DEFAULT_ENGINES)
-  const [selectedEngine, setSelectedEngine] = useState<string>('hunyuan3d_char')
+  const [selectedEngine, setSelectedEngine] = useState<string>('hunyuan3d_mini_hq')
   const [selectedPreset, setSelectedPreset] = useState<string>('default')
   const [mode, setMode] = useState<'text' | 'image'>('text')
 

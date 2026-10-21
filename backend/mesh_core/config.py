@@ -32,7 +32,7 @@ HUNYUAN3D_SUBFOLDER = os.environ.get("MESH_HY3D_SUBFOLDER", "hunyuan3d-dit-v2-mi
 HUNYUAN3D_FULL_MODEL_ID = "tencent/Hunyuan3D-2"
 HUNYUAN3D_FULL_SUBFOLDER = "hunyuan3d-dit-v2-0-turbo"
 
-MESH_3D_ENGINE = os.environ.get("MESH_3D_ENGINE", "hunyuan3d_char")
+MESH_3D_ENGINE = os.environ.get("MESH_3D_ENGINE", "hunyuan3d_mini_hq")
 
 ENGINES_3D = [
     {
