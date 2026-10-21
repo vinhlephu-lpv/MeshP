@@ -434,6 +434,9 @@ export default function App() {
     { label: 'Bình tưới cây', text: 'a green metal watering can', preset: 'default' },
   ]
 
+  const currentEngine = engines.find((e) => e.key === selectedEngine) || engines[0]
+  const currentPreset = presets.find((p) => p.key === selectedPreset) || presets[0]
+
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 select-none">
       {/* Top Header */}
@@ -513,10 +516,10 @@ export default function App() {
             >
               <div className="flex items-center gap-1.5 min-w-0">
                 <span className="text-xs font-semibold text-white truncate">
-                  {engines.find((e) => e.key === selectedEngine) || engines[0]?.label || selectedEngine}
+                  {currentEngine?.label || selectedEngine}
                 </span>
                 <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
-                  {engines.find((e) => e.key === selectedEngine) || engines[0]?.badge}
+                  {currentEngine?.badge || ''}
                 </span>
               </div>
               <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform duration-200 ${isEngineOpen ? 'rotate-180 text-emerald-400' : ''}`} />
@@ -575,10 +578,10 @@ export default function App() {
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-xs font-semibold text-white truncate">
-                    {presets.find((p) => p.key === selectedPreset) || presets[0]?.label || 'Mặc định'}
+                    {currentPreset?.label || 'Mặc định'}
                   </span>
                   <span className="text-[10px] text-slate-400 font-mono truncate">
-                    {presets.find((p) => p.key === selectedPreset) || presets[0]?.target_height_m}m • {presets.find((p) => p.key === selectedPreset) || presets[0]?.target_faces} tris • {presets.find((p) => p.key === selectedPreset) || presets[0]?.palette_colors} màu
+                    {currentPreset?.target_height_m}m • {currentPreset?.target_faces} tris • {currentPreset?.palette_colors} màu
                   </span>
                 </div>
                 <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform duration-200 ${isPresetOpen ? 'rotate-180 text-emerald-400' : ''}`} />

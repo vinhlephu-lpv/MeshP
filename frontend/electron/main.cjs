@@ -54,6 +54,12 @@ async function createWindow() {
     },
   })
 
+  win.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    if (level >= 2) {
+      console.error(`[Renderer Error] ${message} (${sourceId}:${line})`)
+    }
+  })
+
   const devUrl = process.env.VITE_DEV_SERVER_URL
   if (devUrl) {
     win.loadURL(devUrl)
