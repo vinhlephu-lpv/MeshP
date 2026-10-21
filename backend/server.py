@@ -129,8 +129,8 @@ def get_presets():
 class NewPresetReq(BaseModel):
     label: str
     target_height_m: float = 1.0
-    target_faces: int = 10000
-    palette_colors: int = 128
+    target_faces: int = 200000
+    palette_colors: int = 1024
     prompt_hint: str = "single stylized 3d game asset"
 
 

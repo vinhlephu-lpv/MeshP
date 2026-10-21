@@ -37,27 +37,27 @@ MESH_3D_ENGINE = os.environ.get("MESH_3D_ENGINE", "hunyuan3d_char")
 ENGINES_3D = [
     {
         "key": "hunyuan3d_char",
-        "label": "Hunyuan3D-2.0 Full 1.1B • Chuyên Nhân Vật & Chi Tiết (3072 Latents)",
-        "badge": "Đẹp nhất • Nhân vật / Người",
-        "desc": "Dùng 3,072 Latents (gấp 6 lần chi tiết) + tách nền IS-Net + Lưới 384³ (~40s). Tối ưu cho người, nhân vật, con vật.",
+        "label": "Hunyuan3D-2 Full (1.1B)",
+        "badge": "High • 4.5–6GB VRAM",
+        "desc": "3,072 Latents, Lưới 384³, 16 bước (~40s). Chi tiết cao nhất.",
     },
     {
         "key": "hunyuan3d_mini_hq",
-        "label": "Hunyuan3D-2 Mini Ultra (0.6B • 3072 Latents • 384³)",
-        "badge": "Nét cao & Nhẹ • 3.2GB VRAM",
-        "desc": "Bản 0.6B nhưng mở khóa 3,072 Latents gốc + Lưới 384³ (~25s). Đẹp cho cả nhân vật lẫn đồ vật.",
+        "label": "Hunyuan3D-2 Mini Ultra (0.6B)",
+        "badge": "Medium • 3.2GB VRAM",
+        "desc": "Bản 0.6B mở khóa 3,072 Latents, Lưới 384³ (~25s). Cân bằng chi tiết & tốc độ.",
     },
     {
         "key": "hunyuan3d_mini",
-        "label": "Hunyuan3D-2 Mini Turbo (0.6B • 512 Latents)",
-        "badge": "Nhanh • Trái cây / Đồ vật",
-        "desc": "Nhanh (~14s, 2.4GB VRAM, Lưới 256³). Phù hợp cho trái cây, rau củ, đồ vật đơn giản.",
+        "label": "Hunyuan3D-2 Mini (0.6B)",
+        "badge": "Low • 2.4GB VRAM",
+        "desc": "Bản 0.6B (512 Latents), Lưới 256³ (~14s). Nhanh, nhẹ máy.",
     },
     {
         "key": "triposr",
-        "label": "TripoSR (Dự phòng siêu tốc)",
-        "badge": "Siêu tốc ~5s",
-        "desc": "Model NeRF nhẹ dự phòng (~5s).",
+        "label": "TripoSR (Siêu tốc)",
+        "badge": "Flash • 1.8GB VRAM",
+        "desc": "Model NeRF nhẹ (~5s). Phù hợp phác thảo nhanh.",
     },
 ]
 

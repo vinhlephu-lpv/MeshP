@@ -18,6 +18,7 @@ import {
   Ruler,
   RotateCw,
   Upload,
+  Search,
   ChevronDown,
   Check,
   Plus,
@@ -110,32 +111,32 @@ interface EngineOption {
 const DEFAULT_ENGINES: EngineOption[] = [
   {
     key: 'hunyuan3d_char',
-    label: 'Hunyuan3D-2.0 Full 1.1B • Chuyên Nhân Vật & Chi Tiết (3072 Latents)',
-    badge: 'Đẹp nhất • Nhân vật / Người',
-    desc: 'Dùng 3,072 Latents (gấp 6 lần chi tiết) + tách nền IS-Net + Lưới 384³ (~40s). Tối ưu cho người, nhân vật, con vật.',
+    label: 'Hunyuan3D-2 Full (1.1B)',
+    badge: 'High • 4.5–6GB VRAM',
+    desc: '3,072 Latents, Lưới 384³, 16 bước (~40s). Chi tiết cao nhất.',
   },
   {
     key: 'hunyuan3d_mini_hq',
-    label: 'Hunyuan3D-2 Mini Ultra (0.6B • 3072 Latents • 384³)',
-    badge: 'Nét cao & Nhẹ • 3.2GB VRAM',
-    desc: 'Bản 0.6B nhưng mở khóa 3,072 Latents gốc + Lưới 384³ (~25s).',
+    label: 'Hunyuan3D-2 Mini Ultra (0.6B)',
+    badge: 'Medium • 3.2GB VRAM',
+    desc: 'Bản 0.6B mở khóa 3,072 Latents, Lưới 384³ (~25s). Cân bằng chi tiết & tốc độ.',
   },
   {
     key: 'hunyuan3d_mini',
-    label: 'Hunyuan3D-2 Mini Turbo (0.6B • 512 Latents)',
-    badge: 'Nhanh • Trái cây / Đồ vật',
-    desc: 'Nhanh (~14s, 2.4GB VRAM, Lưới 256³). Phù hợp cho trái cây, rau củ, đồ vật đơn giản.',
+    label: 'Hunyuan3D-2 Mini (0.6B)',
+    badge: 'Low • 2.4GB VRAM',
+    desc: 'Bản 0.6B (512 Latents), Lưới 256³ (~14s). Nhanh, nhẹ máy.',
   },
   {
     key: 'triposr',
-    label: 'TripoSR (Dự phòng siêu tốc)',
-    badge: 'Siêu tốc ~5s',
-    desc: 'Model NeRF nhẹ dự phòng (~5s).',
+    label: 'TripoSR (Siêu tốc)',
+    badge: 'Flash • 1.8GB VRAM',
+    desc: 'Model NeRF nhẹ (~5s). Phù hợp phác thảo nhanh.',
   },
 ]
 
 const DEFAULT_PRESETS: Preset[] = [
-  { key: 'default', label: 'Mặc định', target_height_m: 1.0, target_faces: 10000, palette_colors: 128, prompt_hint: 'single stylized 3d game model, clean well-defined proportions' },
+  { key: 'default', label: 'Mặc định', target_height_m: 1.0, target_faces: 200000, palette_colors: 1024, prompt_hint: 'single stylized 3d game model, clean well-defined proportions' },
 ]
 
 export default function App() {
@@ -158,8 +159,8 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   // Post-process options
-  const [targetFaces, setTargetFaces] = useState<number>(10000)
-  const [paletteColors, setPaletteColors] = useState<number>(128)
+  const [targetFaces, setTargetFaces] = useState<number>(200000)
+  const [paletteColors, setPaletteColors] = useState<number>(1024)
   const [targetHeight, setTargetHeight] = useState<number>(1.0)
   const [frontYaw, setFrontYaw] = useState<number>(0)
   const [showAddPreset, setShowAddPreset] = useState<boolean>(false)
@@ -188,7 +189,7 @@ export default function App() {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
-  const [newPreset, setNewPreset] = useState({ label: '', target_height_m: 1.0, target_faces: 10000, palette_colors: 128 })
+  const [newPreset, setNewPreset] = useState({ label: '', target_height_m: 1.0, target_faces: 200000, palette_colors: 1024 })
 
 
   // Viewer & Library state
@@ -286,7 +287,7 @@ export default function App() {
         }
       }
       setShowAddPreset(false)
-      setNewPreset({ label: '', target_height_m: 1.0, target_faces: 10000, palette_colors: 128 })
+      setNewPreset({ label: '', target_height_m: 1.0, target_faces: 200000, palette_colors: 1024 })
     } catch {
       alert('Không thêm được loại asset (backend chưa chạy?)')
     }
@@ -421,18 +422,75 @@ export default function App() {
     loadLibrary(true)
   }
 
+  const [exampleSearch, setExampleSearch] = useState<string>('')
+
   const quickExamples = [
-    { label: 'Nhân vật nông dân', text: 'a cute stylized 3d farm character, full body standing in A-pose', preset: 'default' },
-    { label: 'Bò sữa', text: 'a cute white and black dairy cow', preset: 'default' },
-    { label: 'Gà mái', text: 'a cute fat brown hen chicken', preset: 'default' },
-    { label: 'Cừu trắng', text: 'a fluffy cute white sheep', preset: 'default' },
-    { label: 'Quả cà chua', text: 'a plump red tomato with green leaves on top', preset: 'default' },
-    { label: 'Cà rốt', text: 'a bright orange carrot with green leaves', preset: 'default' },
-    { label: 'Bí ngô', text: 'a plump orange pumpkin', preset: 'default' },
-    { label: 'Cây táo', text: 'a stylized low poly apple tree with red apples', preset: 'default' },
-    { label: 'Nhà kho đỏ', text: 'a cute red wooden farm barn with white roof trim', preset: 'default' },
-    { label: 'Bình tưới cây', text: 'a green metal watering can', preset: 'default' },
+    // Nhân vật & Dân làng
+    { label: 'Nông dân nam', category: 'Nhân vật', text: 'a cute stylized male farm worker in overalls, straw hat, standing in A-pose' },
+    { label: 'Nữ nông dân', category: 'Nhân vật', text: 'a cute stylized female farmer with apron and bandana, standing in A-pose' },
+    { label: 'Cậu bé nông trại', category: 'Nhân vật', text: 'a cute stylized chibi farm boy with dungarees, standing in A-pose' },
+    { label: 'Ông lão làm vườn', category: 'Nhân vật', text: 'a cute stylized old gardener with white beard and boots, standing in A-pose' },
+    { label: 'Hiệp sĩ tí hon', category: 'Nhân vật', text: 'a cute chibi stylized knight with small wooden sword and shield, standing in A-pose' },
+
+    // Vật nuôi & Gia súc
+    { label: 'Bò sữa', category: 'Gia súc', text: 'a cute white and black dairy cow, four legs visible' },
+    { label: 'Bò vàng', category: 'Gia súc', text: 'a cute brown farm cattle cow, rounded stylized body' },
+    { label: 'Gà mái', category: 'Gia súc', text: 'a cute fat brown hen chicken, stylized feathers' },
+    { label: 'Gà trống', category: 'Gia súc', text: 'a colorful stylized farm rooster with red comb, full body' },
+    { label: 'Cừu trắng', category: 'Gia súc', text: 'a fluffy cute white sheep with black face, chunky wool' },
+    { label: 'Heo con hồng', category: 'Gia súc', text: 'a plump cute pink piglet, rounded clean shape' },
+    { label: 'Ngựa nâu', category: 'Gia súc', text: 'a stylized brown farm horse standing, simple mane and tail' },
+    { label: 'Chó chăn cừu', category: 'Gia súc', text: 'a cute stylized border collie farm dog, sitting attentively' },
+    { label: 'Mèo mướp', category: 'Gia súc', text: 'a cute chunky tabby farm cat sitting, stylized paws' },
+    { label: 'Vịt cỏ', category: 'Gia súc', text: 'a cute stylized white duck with orange beak, standing' },
+    { label: 'Thỏ trắng', category: 'Gia súc', text: 'a cute chubby white rabbit with long ears' },
+    { label: 'Dê núi', category: 'Gia súc', text: 'a cute stylized farm goat with small horns and goatee' },
+
+    // Rau củ & Nông sản
+    { label: 'Quả cà chua', category: 'Rau củ', text: 'a plump red tomato with green leaves on top' },
+    { label: 'Cà rốt', category: 'Rau củ', text: 'a bright orange carrot with fresh green leaves' },
+    { label: 'Bí ngô', category: 'Rau củ', text: 'a plump rounded orange pumpkin with curved green stem' },
+    { label: 'Bắp ngô vàng', category: 'Rau củ', text: 'a yellow sweet corn cob with green husks peeled back' },
+    { label: 'Quả dưa hấu', category: 'Rau củ', text: 'a large striped green round watermelon with stem' },
+    { label: 'Quả dâu tây', category: 'Rau củ', text: 'a plump red strawberry with green sepals and yellow seeds' },
+    { label: 'Củ khoai tây', category: 'Rau củ', text: 'a lumpy stylized brown potato with clean surface' },
+    { label: 'Bắp cải xanh', category: 'Rau củ', text: 'a layered stylized green head of cabbage' },
+    { label: 'Quả ớt đỏ', category: 'Rau củ', text: 'a bright red spicy chili pepper with green calyx' },
+    { label: 'Củ tỏi', category: 'Rau củ', text: 'a plump white garlic bulb with paper skin texture' },
+    { label: 'Nấm rơm', category: 'Rau củ', text: 'a cute stylized red mushroom with white spots' },
+
+    // Cây cối & Trái cây
+    { label: 'Cây táo', category: 'Cây cối', text: 'a stylized low poly apple tree with red apples, chunky canopy' },
+    { label: 'Cây cam', category: 'Cây cối', text: 'a cute stylized small orange tree with round orange fruits' },
+    { label: 'Cây lúa vàng', category: 'Cây cối', text: 'a golden sheaf of ripe wheat stalks, tied with twine' },
+    { label: 'Cây chuối', category: 'Cây cối', text: 'a small tropical banana plant with broad green leaves and yellow bananas' },
+    { label: 'Quả xoài chín', category: 'Cây cối', text: 'a plump golden yellow ripe mango fruit' },
+    { label: 'Quả thanh long', category: 'Cây cối', text: 'a vibrant pink dragonfruit with green tipped scales' },
+    { label: 'Bụi hoa hướng dương', category: 'Cây cối', text: 'a vibrant yellow blooming sunflower with brown center and green stem' },
+
+    // Nhà cửa & Công trình
+    { label: 'Nhà kho đỏ', category: 'Công trình', text: 'a cute red wooden farm barn with white roof trim and sliding door' },
+    { label: 'Cối xay gió', category: 'Công trình', text: 'a cute rustic wooden farm windmill with four sails' },
+    { label: 'Chuồng gà', category: 'Công trình', text: 'a small cute wooden chicken coop with ramp and roost' },
+    { label: 'Giếng nước đá', category: 'Công trình', text: 'a round cobblestone water well with wooden roof and bucket' },
+    { label: 'Hàng rào gỗ', category: 'Công trình', text: 'a short segment of white wooden picket fence' },
+
+    // Dụng cụ & Đồ vật
+    { label: 'Bình tưới cây', category: 'Dụng cụ', text: 'a green vintage metal watering can with nozzle' },
+    { label: 'Xe cút kít', category: 'Dụng cụ', text: 'a wooden farm wheelbarrow with metal wheel' },
+    { label: 'Thùng gỗ đựng táo', category: 'Dụng cụ', text: 'a rustic wooden crate filled with red apples' },
+    { label: 'Xẻng làm vườn', category: 'Dụng cụ', text: 'a garden shovel tool with wooden handle and steel blade' },
+    { label: 'Bao tải hạt giống', category: 'Dụng cụ', text: 'a burlap sack full of farm seeds tied with string' },
+    { label: 'Đèn bão cổ', category: 'Dụng cụ', text: 'a classic brass kerosene lantern with glass globe' },
   ]
+
+  const filteredExamples = useMemo(() => {
+    const q = exampleSearch.trim().toLowerCase()
+    if (!q) return quickExamples
+    return quickExamples.filter(
+      (ex) => ex.label.toLowerCase().includes(q) || ex.text.toLowerCase().includes(q) || (ex.category && ex.category.toLowerCase().includes(q))
+    )
+  }, [exampleSearch])
 
   const currentEngine = engines.find((e) => e.key === selectedEngine) || engines[0]
   const currentPreset = presets.find((p) => p.key === selectedPreset) || presets[0]
@@ -453,8 +511,8 @@ export default function App() {
           </div>
         </div>
 
-        {/* Live Status & VRAM bar */}
-        <div className="flex items-center gap-4 text-xs">
+        {/* Live Status & Export & VRAM bar */}
+        <div className="flex items-center gap-3 text-xs">
           {status.busy && (
             <div className="flex items-center gap-2 bg-amber-500/15 border border-amber-500/40 text-amber-300 px-3 py-1 rounded-full">
               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -462,6 +520,39 @@ export default function App() {
               <span className="font-mono font-semibold">{status.percent}%</span>
             </div>
           )}
+
+          {/* Cụm nút Tải file đặt bên trái VRAM - chỉ hiện khi có model */}
+          {activeAsset && (
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => handleOpenFolder(activeAsset.id)}
+                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-medium flex items-center gap-1.5 transition"
+                title={`Mở thư mục: ${activeAsset.dir}`}
+              >
+                <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
+                <span className="hidden sm:inline">Thư mục</span>
+              </button>
+              <a
+                href={`${API_BASE}${activeAsset.urls.glb}?t=${cacheBuster}`}
+                download={`${activeAsset.slug}.glb`}
+                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition"
+                title="Tải model .GLB"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Tải .GLB</span>
+              </a>
+              <a
+                href={`${API_BASE}${activeAsset.urls.obj}?t=${cacheBuster}`}
+                download={`${activeAsset.slug}.obj`}
+                className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition"
+                title="Tải model .OBJ"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Tải .OBJ</span>
+              </a>
+            </div>
+          )}
+
           <div className="flex items-center gap-1.5 text-slate-400 bg-slate-800/70 px-2.5 py-1 rounded border border-slate-700/60">
             <Cpu className="w-3.5 h-3.5 text-emerald-400" />
             <span className="font-mono">{status.vram || 'RTX 3050 4GB'}</span>
@@ -713,7 +804,7 @@ export default function App() {
                   placeholder="Ví dụ: a cute white and black dairy cow"
                   className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
                 />
-                {/* Quick Examples Dropdown */}
+                {/* Quick Examples Dropdown with Search */}
                 <div className="relative mt-2" ref={examplesDropdownRef}>
                   <button
                     type="button"
@@ -726,34 +817,73 @@ export default function App() {
                   >
                     <span className="flex items-center gap-1.5 text-slate-400 truncate">
                       <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                      <span>Chọn mẫu mô tả gợi ý ({quickExamples.length} mẫu)...</span>
+                      <span>Chọn mẫu mô tả ({quickExamples.length} mẫu)...</span>
                     </span>
                     <ChevronDown className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform duration-200 ${isExamplesOpen ? 'rotate-180 text-emerald-400' : ''}`} />
                   </button>
 
                   {isExamplesOpen && (
-                    <div className="absolute top-full left-0 right-0 mt-1 z-30 bg-slate-900/95 border border-slate-700 rounded-xl shadow-2xl p-1 flex flex-col gap-0.5 backdrop-blur-md max-h-56 overflow-y-auto">
-                      {quickExamples.map((ex) => {
-                        const active = subject === ex.text
-                        return (
+                    <div className="absolute top-full left-0 right-0 mt-1 z-30 bg-slate-900/95 border border-slate-700 rounded-xl shadow-2xl overflow-hidden flex flex-col backdrop-blur-md">
+                      {/* Search Bar */}
+                      <div className="p-2 border-b border-slate-800 flex items-center gap-1.5 bg-slate-950/60">
+                        <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <input
+                          type="text"
+                          value={exampleSearch}
+                          onChange={(e) => setExampleSearch(e.target.value)}
+                          placeholder="Tìm mẫu (bò, dưa hấu, nông dân...)..."
+                          className="w-full bg-transparent text-xs text-white placeholder-slate-500 focus:outline-none"
+                          autoFocus
+                        />
+                        {exampleSearch && (
                           <button
-                            key={ex.label}
                             type="button"
-                            onClick={() => {
-                              setSubject(ex.text)
-                              setIsExamplesOpen(false)
-                            }}
-                            className={`text-left px-2.5 py-1.5 rounded-lg transition flex items-center justify-between gap-2 text-xs ${
-                              active
-                                ? 'bg-emerald-500/15 text-emerald-300 font-semibold'
-                                : 'hover:bg-slate-800 text-slate-300'
-                            }`}
+                            onClick={() => setExampleSearch('')}
+                            className="text-slate-400 hover:text-white p-0.5"
                           >
-                            <span className="font-medium shrink-0">+ {ex.label}</span>
-                            <span className="text-[10px] text-slate-500 italic truncate max-w-[170px]">{ex.text}</span>
+                            <X className="w-3 h-3" />
                           </button>
-                        )
-                      })}
+                        )}
+                      </div>
+
+                      {/* List */}
+                      <div className="p-1 flex flex-col gap-0.5 max-h-60 overflow-y-auto">
+                        {filteredExamples.length === 0 ? (
+                          <div className="py-4 text-center text-xs text-slate-500">
+                            Không tìm thấy mẫu phù hợp
+                          </div>
+                        ) : (
+                          filteredExamples.map((ex) => {
+                            const active = subject === ex.text
+                            return (
+                              <button
+                                key={ex.label}
+                                type="button"
+                                onClick={() => {
+                                  setSubject(ex.text)
+                                  setIsExamplesOpen(false)
+                                  setExampleSearch('')
+                                }}
+                                className={`text-left px-2.5 py-1.5 rounded-lg transition flex items-center justify-between gap-2 text-xs ${
+                                  active
+                                    ? 'bg-emerald-500/15 text-emerald-300 font-semibold'
+                                    : 'hover:bg-slate-800 text-slate-300'
+                                }`}
+                              >
+                                <span className="font-medium shrink-0 flex items-center gap-1.5">
+                                  <span>+ {ex.label}</span>
+                                  {ex.category && (
+                                    <span className="text-[9px] px-1 py-0.2 rounded bg-slate-800 text-slate-400 font-normal">
+                                      {ex.category}
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="text-[10px] text-slate-500 italic truncate max-w-[150px]">{ex.text}</span>
+                              </button>
+                            )
+                          })
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -982,10 +1112,14 @@ export default function App() {
               <button
                 onClick={handleReprocess}
                 disabled={status.busy}
-                className="w-full py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition"
+                title={`Nạp lại mesh "${activeAsset.name}" với số tris (${targetFaces}) & màu (${paletteColors}) mới (~1s)`}
+                className="w-full py-2 px-3 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 hover:text-white text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition group"
               >
-                <RefreshCw className="w-3.5 h-3.5" />
-                Áp dụng ngay cho "{activeAsset.name}" (~1 giây, không chạy lại AI)
+                <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 group-hover:rotate-180 transition-transform duration-500 ${status.busy ? 'animate-spin' : ''}`} />
+                <span>Nạp lại cấu hình</span>
+                <span className="text-[10px] text-emerald-400/80 font-mono font-normal">
+                  (~1s • {activeAsset.name})
+                </span>
               </button>
             )}
               </>
@@ -1140,39 +1274,7 @@ export default function App() {
           </div>
 
 
-          {/* Bottom Export Bar for Unity */}
-          {activeAsset && (
-            <div className="h-14 border-t border-slate-800 bg-slate-900 px-4 flex items-center justify-between shrink-0">
-              <div className="text-xs text-slate-400 truncate max-w-md">
-                Thư mục: <span className="font-mono text-slate-300">{activeAsset.dir}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => handleOpenFolder(activeAsset.id)}
-                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition"
-                >
-                  <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
-                  Mở thư mục chứa file (kéo vào Unity)
-                </button>
-                <a
-                  href={`${API_BASE}${activeAsset.urls.glb}?t=${cacheBuster}`}
-                  download={`${activeAsset.slug}.glb`}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold flex items-center gap-1.5 transition"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Tải .GLB
-                </a>
-                <a
-                  href={`${API_BASE}${activeAsset.urls.obj}?t=${cacheBuster}`}
-                  download={`${activeAsset.slug}.obj`}
-                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold flex items-center gap-1.5 transition"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Tải .OBJ
-                </a>
-              </div>
-            </div>
-          )}
+
         </main>
 
         {/* RIGHT PANEL: Asset Library */}

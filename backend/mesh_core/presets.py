@@ -25,8 +25,8 @@ DEFAULT_PRESET = AssetPreset(
     key="default",
     label="Mặc định",
     target_height_m=1.0,
-    target_faces=10000,
-    palette_colors=128,
+    target_faces=200000,
+    palette_colors=1024,
     prompt_hint="single stylized 3d game model, clean well-defined proportions",
     custom=False,
 )
@@ -63,8 +63,8 @@ def load_all_presets() -> dict[str, AssetPreset]:
 def save_custom_preset(
     label: str,
     target_height_m: float = 1.0,
-    target_faces: int = 10000,
-    palette_colors: int = 128,
+    target_faces: int = 200000,
+    palette_colors: int = 1024,
     prompt_hint: str = "single stylized 3d game asset",
 ) -> list[dict]:
     all_p = load_all_presets()
