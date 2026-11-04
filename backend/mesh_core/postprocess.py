@@ -70,7 +70,7 @@ def clean_mesh(mesh: trimesh.Trimesh, min_component_ratio: float) -> trimesh.Tri
     # Gentle Taubin smoothing: removes marching-cubes stair-steps (faces/limbs) without shrinking
     if len(m.faces) >= 5000:
         try:
-            trimesh.smoothing.filter_taubin(m, lamb=0.5, nu=-0.53, iterations=3)
+            trimesh.smoothing.filter_taubin(m, lamb=0.5, nu=-0.53, iterations=5)
         except Exception:
             pass
 

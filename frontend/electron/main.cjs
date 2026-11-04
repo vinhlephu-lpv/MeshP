@@ -45,7 +45,7 @@ async function createWindow() {
     height: 900,
     minWidth: 1100,
     minHeight: 700,
-    title: 'Mesh Studio – Tạo Model 3D Game Nông Trại (Unity)',
+    title: 'Mesh Studio – Aurasoft Systems',
     backgroundColor: '#020617',
     autoHideMenuBar: true,
     webPreferences: {

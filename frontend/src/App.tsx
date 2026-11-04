@@ -1,7 +1,5 @@
 import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Canvas } from '@react-three/fiber'
-import { OrbitControls, Grid, Html, useGLTF } from '@react-three/drei'
-import * as THREE from 'three'
+import Showcase from './Showcase'
 import {
   Sparkles,
   Image as ImageIcon,
@@ -70,35 +68,6 @@ interface AssetMeta {
     source: string
     prepared: string
   }
-}
-
-function GLBModel({
-  url,
-  wireframe,
-  autoRotate,
-}: {
-  url: string
-  wireframe: boolean
-  autoRotate: boolean
-}) {
-  const { scene } = useGLTF(url)
-  const cloned = useMemo(() => {
-    const c = scene.clone(true)
-    c.traverse((obj: any) => {
-      if (obj.isMesh && obj.material) {
-        obj.material = obj.material.clone()
-        obj.material.wireframe = wireframe
-        if (obj.material.map) {
-          obj.material.map.magFilter = THREE.NearestFilter
-          obj.material.map.minFilter = THREE.NearestFilter
-          obj.material.map.needsUpdate = true
-        }
-      }
-    })
-    return c
-  }, [scene, wireframe])
-
-  return <primitive object={cloned} />
 }
 
 interface EngineOption {
@@ -498,15 +467,21 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 select-none">
       {/* Top Header */}
-      <header className="h-12 border-b border-slate-800 bg-slate-900/80 px-4 flex items-center justify-between shrink-0">
+      <header className="relative h-12 border-b border-slate-800 bg-gradient-to-r from-slate-900 via-slate-900/95 to-slate-900 px-4 flex items-center justify-between shrink-0">
+        <div className="absolute left-0 right-0 bottom-0 h-[2px] bg-slate-800/60 overflow-hidden">
+          <div
+            className={`h-full bg-gradient-to-r from-emerald-400 via-cyan-400 to-indigo-400 transition-all duration-500 ${status.busy ? 'opacity-100' : 'opacity-0'}`}
+            style={{ width: `${Math.max(status.percent, status.busy ? 4 : 0)}%` }}
+          />
+        </div>
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
             <Box className="w-5 h-5" />
           </div>
           <div>
-            <span className="font-bold tracking-tight text-white">MESH STUDIO</span>
-            <span className="ml-2 text-xs px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-              Hunyuan3D-2 • Unity Farm
+            <span className="font-extrabold tracking-tight text-white">MESH STUDIO</span>
+            <span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 text-emerald-200 border border-emerald-500/30 tracking-[0.18em] font-semibold">
+              AURASOFT SYSTEMS
             </span>
           </div>
         </div>
@@ -1129,96 +1104,26 @@ export default function App() {
 
         {/* CENTER PANEL: Interactive 3D Viewport */}
         <main className="flex-1 flex flex-col bg-slate-950 relative overflow-hidden">
-          {/* Viewport Toolbar */}
-          <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between pointer-events-none">
-            <div className="flex items-center gap-2 pointer-events-auto bg-slate-900/90 backdrop-blur border border-slate-800 rounded-lg p-1.5 text-xs">
-              <button
-                onClick={() => setWireframe(!wireframe)}
-                className={`px-2.5 py-1 rounded font-medium transition ${
-                  wireframe ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:bg-slate-800'
-                }`}
-              >
-                Lưới (Wireframe)
-              </button>
-              <button
-                onClick={() => setAutoRotate(!autoRotate)}
-                className={`px-2.5 py-1 rounded font-medium transition ${
-                  autoRotate ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:bg-slate-800'
-                }`}
-              >
-                Tự xoay
-              </button>
-              <button
-                onClick={() => setShowTurnaround(!showTurnaround)}
-                className={`px-2.5 py-1 rounded font-medium transition ${
-                  showTurnaround ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:bg-slate-800'
-                }`}
-              >
-                Ảnh 4 góc & Palette
-              </button>
-            </div>
-
-            {activeAsset && (
-              <div className="pointer-events-auto flex items-center gap-2 bg-slate-900/90 backdrop-blur border border-slate-800 rounded-lg px-3 py-1.5 text-xs">
-                <span className="text-slate-400">
-                  Tam giác: <strong className="text-emerald-400">{activeAsset.stats.final_faces}</strong>
-                </span>
-                <span className="text-slate-600">•</span>
-                <span className="text-slate-400">
-                  Màu: <strong className="text-emerald-400">{activeAsset.stats.palette_colors}</strong>
-                </span>
-                <span className="text-slate-600">•</span>
-                <span className="text-slate-400">
-                  Kích thước (m):{' '}
-                  <strong className="text-slate-200 font-mono">
-                    {activeAsset.stats.size_m.join(' × ')}
-                  </strong>
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* 3D Canvas */}
+          {/* 3D Showcase viewport */}
           <div className="flex-1 min-h-0 relative">
             {activeAsset ? (
-              <Canvas camera={{ position: [1.8, 1.4, 2.2], fov: 45 }}>
-                <color attach="background" args={['#090d16']} />
-                <ambientLight intensity={0.85} />
-                <directionalLight position={[4, 8, 5]} intensity={1.3} />
-                <directionalLight position={[-4, 3, -4]} intensity={0.4} />
-                <Grid
-                  infiniteGrid
-                  fadeDistance={12}
-                  sectionColor="#1e293b"
-                  cellColor="#0f172a"
-                  position={[0, 0, 0]}
-                />
-                <Suspense
-                  fallback={
-                    <Html center>
-                      <div className="px-4 py-2 rounded bg-slate-900 border border-slate-700 text-xs text-emerald-400 whitespace-nowrap">
-                        Đang nạp model 3D...
-                      </div>
-                    </Html>
-                  }
-                >
-                  <GLBModel
-                    url={`${API_BASE}${activeAsset.urls.glb}?t=${cacheBuster}`}
-                    wireframe={wireframe}
-                    autoRotate={autoRotate}
-                  />
-                </Suspense>
-                <OrbitControls
-                  makeDefault
-                  target={[0, (activeAsset.options?.target_height_m || 1) * 0.45, 0]}
-                  autoRotate={autoRotate}
-                  autoRotateSpeed={1.5}
-                />
-              </Canvas>
+              <Showcase
+                url={`${API_BASE}${activeAsset.urls.glb}?t=${cacheBuster}`}
+                name={activeAsset.name}
+                stats={activeAsset.stats}
+                wireframe={wireframe}
+                setWireframe={setWireframe}
+                autoRotate={autoRotate}
+                setAutoRotate={setAutoRotate}
+                showTurnaround={showTurnaround}
+                setShowTurnaround={setShowTurnaround}
+              />
             ) : (
-              <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-2">
-                <Box className="w-12 h-12 stroke-1" />
-                <p className="text-sm">Chưa có model nào được chọn</p>
+              <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-3">
+                <div className="w-20 h-20 rounded-2xl border border-slate-800 bg-slate-900/60 flex items-center justify-center">
+                  <Box className="w-10 h-10 stroke-1 text-emerald-500/70" />
+                </div>
+                <p className="text-sm">Chưa có model nào — tạo mới hoặc chọn từ thư viện bên phải</p>
               </div>
             )}
 
