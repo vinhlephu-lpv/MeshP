@@ -15,7 +15,7 @@ import rembg
 import torch
 import trimesh
 from PIL import Image
-from scipy.ndimage import binary_erosion, distance_transform_edt, gaussian_filter
+from scipy.ndimage import binary_erosion, distance_transform_edt, gaussian_filter, median_filter
 
 from .config import (
     DEVICE,
@@ -221,7 +221,27 @@ def colorize_mesh_from_rgba(mesh: trimesh.Trimesh, prepared_rgba: Image.Image) -
     px = np.clip((x0 + u_in * (x1 - x0)).astype(int), 0, rgb.shape[1] - 1)
     py = np.clip((y0 + w_in * (y1 - y0)).astype(int), 0, rgb.shape[0] - 1)
 
-    vcol = (np.clip(rgb_filled[py, px], 0.0, 1.0) * 255.0).astype(np.uint8)
+    front_col = rgb_filled[py, px]
+
+    # Back side: the single front photo is orthographically projected through the whole mesh, so
+    # small details (stems, logos, faces) get mirrored onto the back (e.g. a watermelon with 2 stems).
+    # Blend toward a heavily blurred copy of the image on back-facing surfaces: keeps the overall
+    # colour/pattern but removes the duplicated details.
+    back_w = np.clip((-vn[:, 2] - 0.05) / 0.45, 0.0, 1.0)[:, None]
+    if back_w.max() > 0:
+        # Median filter (on a half-res copy for speed) removes small blobs such as stems/logos but keeps
+        # wide stripes/patches, unlike a Gaussian blur which turns the back into mud.
+        h, w = rgb_filled.shape[:2]
+        small = np.asarray(
+            Image.fromarray((rgb_filled * 255).astype(np.uint8)).resize((max(w // 2, 1), max(h // 2, 1)), Image.BILINEAR)
+        )
+        k = max(int(max(h, w) * 0.05) | 1, 3)
+        med = median_filter(small, size=(k, k, 1))
+        rgb_back = np.asarray(Image.fromarray(med).resize((w, h), Image.BILINEAR)).astype(np.float32) / 255.0
+        rgb_back = gaussian_filter(rgb_back, sigma=(2.0, 2.0, 0.0))
+        front_col = front_col * (1.0 - back_w) + rgb_back[py, px] * back_w
+
+    vcol = (np.clip(front_col, 0.0, 1.0) * 255.0).astype(np.uint8)
     mesh.visual = trimesh.visual.ColorVisuals(mesh=mesh, vertex_colors=vcol)
     return mesh
 
