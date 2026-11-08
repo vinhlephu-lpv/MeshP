@@ -169,16 +169,33 @@ class Hunyuan3DDiTPipeline:
                 if model_name not in ckpt:
                     ckpt[model_name] = {}
                 ckpt[model_name][new_key] = value
+            del safetensors_ckpt
         else:
             ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=True)
-        # load model
-        model = instantiate_from_config(config['model'])
-        model.load_state_dict(ckpt['model'])
-        vae = instantiate_from_config(config['vae'])
-        vae.load_state_dict(ckpt['vae'], strict=False)
-        conditioner = instantiate_from_config(config['conditioner'])
-        if 'conditioner' in ckpt:
-            conditioner.load_state_dict(ckpt['conditioner'])
+        # Load submodules incrementally to avoid >12.7 GB CPU RAM OOM on Google Colab
+        import gc
+        prev_dtype = torch.get_default_dtype()
+        try:
+            if dtype in (torch.float16, torch.bfloat16):
+                torch.set_default_dtype(dtype)
+            model = instantiate_from_config(config['model'])
+            model.load_state_dict(ckpt.pop('model'))
+            model.to(device=device, dtype=dtype)
+            gc.collect()
+
+            vae = instantiate_from_config(config['vae'])
+            vae.load_state_dict(ckpt.pop('vae'), strict=False)
+            vae.to(device=device, dtype=dtype)
+            gc.collect()
+
+            conditioner = instantiate_from_config(config['conditioner'])
+            if 'conditioner' in ckpt:
+                conditioner.load_state_dict(ckpt.pop('conditioner'))
+            conditioner.to(device=device, dtype=dtype)
+            del ckpt
+            gc.collect()
+        finally:
+            torch.set_default_dtype(prev_dtype)
         image_processor = instantiate_from_config(config['image_processor'])
         scheduler = instantiate_from_config(config['scheduler'])
 

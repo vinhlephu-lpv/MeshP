@@ -132,13 +132,15 @@ def _load_hunyuan3d_ultra():
     from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
     dtype = torch.float16 if DEVICE == "cuda" else torch.float32
-    return Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+    pipe = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
         HUNYUAN3D_FULL_MODEL_ID,
         subfolder=HUNYUAN3D_ULTRA_SUBFOLDER,
         use_safetensors=True,
         device=DEVICE,
         dtype=dtype,
     )
+    pipe.enable_flashvdm(mc_algo="mc", replace_vae=False)
+    return pipe
 
 
 def _load_triposr():
