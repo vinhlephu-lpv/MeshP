@@ -26,6 +26,7 @@ from .config import (
     HUNYUAN3D_OCTREE_RES,
     HUNYUAN3D_STEPS,
     HUNYUAN3D_SUBFOLDER,
+    HUNYUAN3D_ULTRA_SUBFOLDER,
     MESH_3D_ENGINE,
     TRIPOSR_CHUNK_SIZE,
     TRIPOSR_DIR,
@@ -126,6 +127,20 @@ def _load_hunyuan3d_full():
     return pipe
 
 
+def _load_hunyuan3d_ultra():
+    """Non-distilled 1.1B model (50 steps + classifier-free guidance). Needs ~12+ GB VRAM (Colab T4)."""
+    from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
+
+    dtype = torch.float16 if DEVICE == "cuda" else torch.float32
+    return Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+        HUNYUAN3D_FULL_MODEL_ID,
+        subfolder=HUNYUAN3D_ULTRA_SUBFOLDER,
+        use_safetensors=True,
+        device=DEVICE,
+        dtype=dtype,
+    )
+
+
 def _load_triposr():
     from tsr.system import TSR
 
@@ -143,6 +158,7 @@ manager.register("hunyuan3d_mini", _load_hunyuan3d_mini_fast)
 manager.register("hunyuan3d_mini_hq", _load_hunyuan3d_mini_3072)
 manager.register("hunyuan3d_full", _load_hunyuan3d_full)
 manager.register("hunyuan3d_char", _load_hunyuan3d_full)
+manager.register("hunyuan3d_ultra", _load_hunyuan3d_ultra)
 manager.register("triposr", _load_triposr)
 
 _rembg_session = None
@@ -324,6 +340,45 @@ def _hunyuan_image_to_mesh(
     return mesh
 
 
+def _hunyuan_ultra_image_to_mesh(
+    prepared_rgba: Image.Image,
+    steps: int = 50,
+    guidance: float = 5.0,
+    octree_resolution: int = 512,
+    seed: int = 42,
+) -> trimesh.Trimesh:
+    """Highest-quality path: full 1.1B model, 50 steps with CFG, 512^3 grid. Falls back to 384^3 on OOM."""
+    pipe = manager.get("hunyuan3d_ultra")
+    if prepared_rgba.mode != "RGBA":
+        prepared_rgba = prepare_image(prepared_rgba)
+
+    def run(res: int):
+        gen = torch.Generator(device=DEVICE).manual_seed(seed)
+        return pipe(
+            image=prepared_rgba,
+            num_inference_steps=steps,
+            guidance_scale=guidance,
+            dual_guidance=False,
+            generator=gen,
+            octree_resolution=res,
+            num_chunks=20000,
+            output_type="trimesh",
+            enable_pbar=False,
+        )[0]
+
+    try:
+        mesh = run(octree_resolution)
+    except torch.cuda.OutOfMemoryError:
+        gc.collect()
+        torch.cuda.empty_cache()
+        print("[MeshStudio] Het VRAM o luoi 512^3, thu lai 384^3", flush=True)
+        mesh = run(384)
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return colorize_mesh_from_rgba(mesh, prepared_rgba)
+
+
 def _triposr_image_to_mesh(prepared_rgba: Image.Image, resolution: int = TRIPOSR_MC_RESOLUTION) -> trimesh.Trimesh:
     """Fallback TripoSR generator converted to Y-up, front = +Z."""
     model = manager.get("triposr")
@@ -350,6 +405,8 @@ def image_to_mesh(
     eng = (engine or MESH_3D_ENGINE).lower()
     if eng == "triposr":
         return _triposr_image_to_mesh(prepared, resolution=resolution)
+    if eng == "hunyuan3d_ultra":
+        return _hunyuan_ultra_image_to_mesh(prepared)
     if eng in ("hunyuan3d_char", "hunyuan3d_full"):
         return _hunyuan_image_to_mesh(
             prepared,

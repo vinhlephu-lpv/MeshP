@@ -31,6 +31,7 @@ HUNYUAN3D_MODEL_ID = os.environ.get("MESH_HY3D_MODEL", "tencent/Hunyuan3D-2mini"
 HUNYUAN3D_SUBFOLDER = os.environ.get("MESH_HY3D_SUBFOLDER", "hunyuan3d-dit-v2-mini-turbo")
 HUNYUAN3D_FULL_MODEL_ID = "tencent/Hunyuan3D-2"
 HUNYUAN3D_FULL_SUBFOLDER = "hunyuan3d-dit-v2-0-turbo"
+HUNYUAN3D_ULTRA_SUBFOLDER = "hunyuan3d-dit-v2-0"   # non-distilled, 50 steps + CFG (needs >= 12 GB VRAM)
 
 MESH_3D_ENGINE = os.environ.get("MESH_3D_ENGINE", "hunyuan3d_mini_hq")
 
@@ -60,6 +61,24 @@ ENGINES_3D = [
         "desc": "Model NeRF nhẹ (~5s). Phù hợp phác thảo nhanh.",
     },
 ]
+
+def _gpu_vram_gb() -> float:
+    try:
+        if torch.cuda.is_available():
+            return torch.cuda.get_device_properties(0).total_memory / 1024**3
+    except Exception:
+        pass
+    return 0.0
+
+
+# Ultra mode is only offered on large GPUs (e.g. Google Colab T4 = 15 GB)
+if _gpu_vram_gb() >= 12.0:
+    ENGINES_3D.insert(0, {
+        "key": "hunyuan3d_ultra",
+        "label": "Hunyuan3D-2 Ultra (1.1B, 50 bước)",
+        "badge": "Ultra • ≥12GB VRAM",
+        "desc": "Bản gốc không rút gọn, 50 bước + CFG, lưới 512³ (~3-6 phút). Chi tiết & chính xác cao nhất.",
+    })
 
 # --- Low-VRAM knobs ----------------------------------------------------------
 TRIPOSR_CHUNK_SIZE = int(os.environ.get("MESH_TRIPOSR_CHUNK", 4096))

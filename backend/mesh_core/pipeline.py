@@ -73,6 +73,7 @@ def image_to_asset(image: Image.Image, name: str, preset_key: str,
         "hunyuan3d_mini_hq": "Hunyuan3D-2 Mini Ultra (384³)",
         "hunyuan3d_full": "Hunyuan3D-2.0 Full Turbo (1.1B)",
         "hunyuan3d_char": "Hunyuan3D-2.0 Full 1.1B (Nhân vật)",
+        "hunyuan3d_ultra": "Hunyuan3D-2.0 Ultra (50 bước, 512³)",
         "triposr": "TripoSR",
     }
     eng_label = engine_labels.get(engine, engine)
