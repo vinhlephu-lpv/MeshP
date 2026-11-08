@@ -164,13 +164,40 @@ manager.register("triposr", _load_triposr)
 _rembg_session = None
 
 
+def _ensure_rembg_model(model_name: str = "isnet-general-use") -> None:
+    """Pre-download rembg ONNX weights from HuggingFace mirror when GitHub Releases times out (504)."""
+    import os
+    import shutil
+    from pathlib import Path
+
+    os.environ.setdefault("MODEL_CHECKSUM_DISABLED", "1")
+    u2net_dir = Path(
+        os.path.expanduser(os.getenv("U2NET_HOME", os.path.join(os.getenv("XDG_DATA_HOME", "~"), ".u2net")))
+    )
+    u2net_dir.mkdir(parents=True, exist_ok=True)
+    target = u2net_dir / f"{model_name}.onnx"
+    if target.exists() and target.stat().st_size > 10_000_000:
+        return
+    if target.exists():
+        target.unlink(missing_ok=True)
+    try:
+        from huggingface_hub import hf_hub_download
+
+        cached = hf_hub_download(repo_id="tomjackson2023/rembg", filename=f"{model_name}.onnx")
+        shutil.copyfile(cached, target)
+    except Exception:
+        pass
+
+
 def prepare_image(image: Image.Image, foreground_ratio: float = 0.85) -> Image.Image:
     """Remove background using high-precision IS-Net (cached on C:) for clean character limbs/hair."""
     global _rembg_session
     if _rembg_session is None:
         try:
+            _ensure_rembg_model("isnet-general-use")
             _rembg_session = rembg.new_session("isnet-general-use", providers=["CPUExecutionProvider"])
         except Exception:
+            _ensure_rembg_model("u2net")
             _rembg_session = rembg.new_session("u2net", providers=["CPUExecutionProvider"])
     img = remove_background(image.convert("RGB"), _rembg_session)
     img = resize_foreground(img, foreground_ratio)
