@@ -256,37 +256,44 @@ def colorize_mesh_from_rgba(mesh: trimesh.Trimesh, prepared_rgba: Image.Image) -
 
     u = (v[:, 0] - vmin[0]) / max(float(vmax[0] - vmin[0]), 1e-6)
     w = 1.0 - (v[:, 1] - vmin[1]) / max(float(vmax[1] - vmin[1]), 1e-6)
+    z_norm = (v[:, 2] - vmin[2]) / max(float(vmax[2] - vmin[2]), 1e-6)
 
-    # Local normal nudge (1.2% inward along the vertex's own normal) instead of global center pull
-    # so outstretched character arms, legs, eyes, and clothing align 1:1 with the 2D silhouette
+    # Local normal nudge for front-facing 1:1 silhouette alignment
     side_factor = 1.0 - np.abs(vn[:, 2])
     u_in = np.clip(u - vn[:, 0] * 0.015 * side_factor, 0.005, 0.995)
     w_in = np.clip(w + vn[:, 1] * 0.015 * side_factor, 0.005, 0.995)
 
-    px = np.clip((x0 + u_in * (x1 - x0)).astype(int), 0, rgb.shape[1] - 1)
-    py = np.clip((y0 + w_in * (y1 - y0)).astype(int), 0, rgb.shape[0] - 1)
+    px_front = np.clip((x0 + u_in * (x1 - x0)).astype(int), 0, rgb.shape[1] - 1)
+    py_front = np.clip((y0 + w_in * (y1 - y0)).astype(int), 0, rgb.shape[0] - 1)
+    col_front = rgb_filled[py_front, px_front]
 
-    front_col = rgb_filled[py, px]
+    # Triplanar sampling for sides (±X) and back (-Z) from the clean interior body region
+    # so side views (90°/270°) never stretch 1px edge lines horizontally, and the back (180°)
+    # stays crisp without duplicating small top/front protrusions (like a watermelon stem).
+    w_body = np.where(w_in > 0.16, 0.22 + 0.68 * w_in, w_in)
+    py_body = np.clip((y0 + w_body * (y1 - y0)).astype(int), 0, rgb.shape[0] - 1)
 
-    # Back side: the single front photo is orthographically projected through the whole mesh, so
-    # small details (stems, logos, faces) get mirrored onto the back (e.g. a watermelon with 2 stems).
-    # Blend toward a heavily blurred copy of the image on back-facing surfaces: keeps the overall
-    # colour/pattern but removes the duplicated details.
-    back_w = np.clip((-vn[:, 2] - 0.05) / 0.45, 0.0, 1.0)[:, None]
-    if back_w.max() > 0:
-        # Median filter (on a half-res copy for speed) removes small blobs such as stems/logos but keeps
-        # wide stripes/patches, unlike a Gaussian blur which turns the back into mud.
-        h, w = rgb_filled.shape[:2]
-        small = np.asarray(
-            Image.fromarray((rgb_filled * 255).astype(np.uint8)).resize((max(w // 2, 1), max(h // 2, 1)), Image.BILINEAR)
-        )
-        k = max(int(max(h, w) * 0.05) | 1, 3)
-        med = median_filter(small, size=(k, k, 1))
-        rgb_back = np.asarray(Image.fromarray(med).resize((w, h), Image.BILINEAR)).astype(np.float32) / 255.0
-        rgb_back = gaussian_filter(rgb_back, sigma=(2.0, 2.0, 0.0))
-        front_col = front_col * (1.0 - back_w) + rgb_back[py, px] * back_w
+    u_side = 0.18 + 0.64 * z_norm
+    px_side = np.clip((x0 + u_side * (x1 - x0)).astype(int), 0, rgb.shape[1] - 1)
+    col_side = rgb_filled[py_body, px_side]
 
-    vcol = (np.clip(front_col, 0.0, 1.0) * 255.0).astype(np.uint8)
+    u_back = 0.18 + 0.64 * (1.0 - u_in)
+    px_back = np.clip((x0 + u_back * (x1 - x0)).astype(int), 0, rgb.shape[1] - 1)
+    col_back = rgb_filled[py_body, px_back]
+
+    # Smooth triplanar weights based on surface normal direction
+    w_fz = np.clip(vn[:, 2], 0.0, 1.0) ** 2
+    w_bz = np.clip(-vn[:, 2], 0.0, 1.0) ** 2
+    w_sx = (vn[:, 0] ** 2) + 0.35 * (vn[:, 1] ** 2) * (1.0 - w_fz)
+    w_sum = np.maximum(w_fz + w_bz + w_sx, 1e-6)
+
+    blended = (
+        col_front * (w_fz / w_sum)[:, None]
+        + col_side * (w_sx / w_sum)[:, None]
+        + col_back * (w_bz / w_sum)[:, None]
+    )
+
+    vcol = (np.clip(blended, 0.0, 1.0) * 255.0).astype(np.uint8)
     mesh.visual = trimesh.visual.ColorVisuals(mesh=mesh, vertex_colors=vcol)
     return mesh
 
