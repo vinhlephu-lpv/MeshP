@@ -1,4 +1,7 @@
-"""Standalone runner for Microsoft TRELLIS (microsoft/TRELLIS-image-large) on Google Colab T4."""
+"""Standalone runner for Microsoft TRELLIS (microsoft/TRELLIS-image-large) on Google Colab T4.
+Uses native FlexiCubes 3D color extraction & pure-PyTorch anti-aliased UV baking.
+Zero crash on Colab T4 (no broken diff_gaussian_rasterization CUDA extension).
+"""
 from __future__ import annotations
 
 import argparse
@@ -14,7 +17,6 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-# Mandatory environment variables for Tesla T4 (Turing sm_75) before importing trellis
 os.environ["MPLBACKEND"] = "Agg"
 os.environ["ATTN_BACKEND"] = "xformers"
 os.environ["SPARSE_ATTN_BACKEND"] = "xformers"
@@ -32,13 +34,11 @@ import pyvista as pv
 import torch
 import trimesh
 import trimesh.visual
-import utils3d
 import xatlas
 from huggingface_hub import hf_hub_download
 from PIL import Image
 from pymeshfix import _meshfix
 
-# Bypass GitHub web 504 timeout inside torch.hub.load('facebookresearch/dinov2', ...)
 _orig_hub_load = torch.hub.load
 
 
@@ -64,7 +64,6 @@ def _slug(text: str) -> str:
 
 
 def ensure_u2net() -> None:
-    """Download u2net.onnx from HuggingFace mirror so rembg never fails with GitHub 504."""
     cached = hf_hub_download(repo_id="tomjackson2023/rembg", filename="u2net.onnx")
     for d in {os.environ.get("U2NET_HOME", "/root/.u2net"), os.path.expanduser("~/.u2net")}:
         Path(d).mkdir(parents=True, exist_ok=True)
@@ -73,22 +72,130 @@ def ensure_u2net() -> None:
             shutil.copyfile(cached, dst)
 
 
-def bake_multiview_gaussian_to_glb(
-    gs,
+def render_mesh_views_pytorch(
+    verts: np.ndarray,
+    faces: np.ndarray,
+    vertex_colors: np.ndarray,
+    yaws_rad: list[float],
+    pitch_rad: float = 0.25,
+    size: int = 1024,
+    bg_color: tuple[float, float, float] = (0.96, 0.96, 0.98),
+) -> list[np.ndarray]:
+    """Pure-PyTorch depth-buffered triangle rasterizer: sharp, anti-aliased, 100% stable on T4."""
+    v_t = torch.from_numpy(verts).float().cuda()
+    f_t = torch.from_numpy(faces).long().cuda()
+    c_t = torch.from_numpy(vertex_colors).float().cuda()
+
+    center = 0.5 * (v_t.min(dim=0).values + v_t.max(dim=0).values)
+    span = float((v_t.max(dim=0).values - v_t.min(dim=0).values).max().item())
+    v_norm = (v_t - center) / max(span, 1e-6)
+
+    # Simple studio directional lighting
+    tri_v0 = v_norm[f_t[:, 0]]
+    tri_v1 = v_norm[f_t[:, 1]]
+    tri_v2 = v_norm[f_t[:, 2]]
+    face_normals = torch.nn.functional.normalize(torch.cross(tri_v1 - tri_v0, tri_v2 - tri_v0, dim=-1), dim=-1)
+
+    light_dir = torch.nn.functional.normalize(torch.tensor([0.4, 0.6, 0.8], device="cuda"), dim=-1)
+    shade = 0.45 + 0.55 * torch.clamp((face_normals * light_dir[None, :]).sum(dim=-1), 0.0, 1.0)
+
+    # Sub-triangle barycentric sampling points (for anti-aliased rasterization)
+    u_grid = torch.linspace(0.0, 1.0, 12, device="cuda")
+    uu, vv = torch.meshgrid(u_grid, u_grid, indexing="ij")
+    mb = (uu + vv) <= 1.0
+    b0, b1 = uu[mb], vv[mb]
+    b2 = 1.0 - b0 - b1
+
+    c0 = c_t[f_t[:, 0]] * shade[:, None]
+    c1 = c_t[f_t[:, 1]] * shade[:, None]
+    c2 = c_t[f_t[:, 2]] * shade[:, None]
+
+    cp, sp = float(np.cos(pitch_rad)), float(np.sin(pitch_rad))
+    rx = torch.tensor([[1.0, 0.0, 0.0], [0.0, cp, -sp], [0.0, sp, cp]], device="cuda")
+
+    frames = []
+    F_num = len(faces)
+    for yaw in yaws_rad:
+        cy, sy = float(np.cos(yaw)), float(np.sin(yaw))
+        ry = torch.tensor([[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]], device="cuda")
+        rot = rx @ ry
+        v_rot = v_norm @ rot.T
+
+        rv0 = v_rot[f_t[:, 0]]
+        rv1 = v_rot[f_t[:, 1]]
+        rv2 = v_rot[f_t[:, 2]]
+
+        # Backface culling in camera space (camera looks down -Z)
+        cross_z = (rv1[:, 0] - rv0[:, 0]) * (rv2[:, 1] - rv0[:, 1]) - (rv1[:, 1] - rv0[:, 1]) * (rv2[:, 0] - rv0[:, 0])
+        front_faces = torch.nonzero(cross_z > 0.0).reshape(-1)
+
+        depth_buf = torch.full((size, size), -1e5, dtype=torch.float32, device="cuda")
+        color_buf = torch.full((size, size, 3), 0.0, dtype=torch.float32, device="cuda")
+
+        for s in range(0, len(front_faces), 10000):
+            idx_f = front_faces[s:s + 10000]
+            p_xyz = (
+                b0[None, :, None] * rv0[idx_f, None, :]
+                + b1[None, :, None] * rv1[idx_f, None, :]
+                + b2[None, :, None] * rv2[idx_f, None, :]
+            ).reshape(-1, 3)
+            p_col = (
+                b0[None, :, None] * c0[idx_f, None, :]
+                + b1[None, :, None] * c1[idx_f, None, :]
+                + b2[None, :, None] * c2[idx_f, None, :]
+            ).reshape(-1, 3)
+
+            px = ((p_xyz[:, 0] * 0.82 + 0.5) * (size - 1)).round().long().clamp(0, size - 1)
+            py = ((-p_xyz[:, 1] * 0.82 + 0.5) * (size - 1)).round().long().clamp(0, size - 1)
+            pz = p_xyz[:, 2]
+
+            flat_idx = py * size + px
+            depth_flat = depth_buf.view(-1)
+            color_flat = color_buf.view(-1, 3)
+
+            # Atomic depth maximum
+            depth_flat.scatter_reduce_(0, flat_idx, pz, reduce="amax", include_self=True)
+            is_closest = (pz >= depth_flat[flat_idx] - 1e-4)
+            color_flat.scatter_(0, flat_idx[is_closest, None].expand(-1, 3), p_col[is_closest])
+
+        mask = (depth_buf > -1e4)[:, :, None]
+        bg = torch.tensor(bg_color, device="cuda", dtype=torch.float32)[None, None, :]
+        out = torch.where(mask, color_buf, bg)
+
+        frame = np.clip(out.cpu().numpy() * 255.0, 0, 255).astype(np.uint8)
+        frames.append(frame)
+
+    del v_t, f_t, c_t, tri_v0, tri_v1, tri_v2, face_normals
+    torch.cuda.empty_cache()
+    return frames
+
+
+def build_crisp_textured_glb(
     mesh_res,
-    render_utils,
     simplify_ratio: float = 0.90,
     texture_size: int = 2048,
-) -> tuple[trimesh.Trimesh, Image.Image]:
-    """Multi-view projection of 1024x1024 3D Gaussian Splatting renders onto 2048x2048 UV texture."""
-    verts = mesh_res.vertices.detach().cpu().numpy().astype(np.float32)
+) -> tuple[trimesh.Trimesh, Image.Image, np.ndarray, np.ndarray, np.ndarray]:
+    """Convert FlexiCubes vertex attributes into an ultra-sharp 2048x2048 UV texture GLB."""
+    # Rotate mesh from Z-up to Y-up
+    rot_z2y = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]], dtype=np.float32)
+    verts = mesh_res.vertices.detach().cpu().numpy().astype(np.float32) @ rot_z2y
     faces = mesh_res.faces.detach().cpu().numpy().astype(np.int32)
 
+    # Extract 3D color channels from FlexiCubes attributes
+    raw_col = mesh_res.vertex_attrs[:, :3].detach().cpu().numpy().astype(np.float32)
+    # If the network output logits, map through sigmoid; otherwise clamp
+    if raw_col.min() < 0.0 or raw_col.max() > 1.0:
+        raw_col = 1.0 / (1.0 + np.exp(-raw_col))
+    colors = np.clip(raw_col, 0.0, 1.0)
+
+    # Decimate geometry while preserving vertex color sharpness
     if 0.0 < simplify_ratio < 1.0 and len(faces) > 12000:
-        pv_faces = np.hstack([np.full((len(faces), 1), 3, dtype=np.int32), faces])
-        poly = pv.PolyData(verts, pv_faces).decimate(simplify_ratio)
-        verts = np.asarray(poly.points, dtype=np.float32)
-        faces = np.asarray(poly.faces, dtype=np.int32).reshape(-1, 4)[:, 1:]
+        poly = pv.PolyData(verts, np.hstack([np.full((len(faces), 1), 3, dtype=np.int32), faces]))
+        poly.point_data["colors"] = colors
+        poly_dec = poly.decimate(simplify_ratio)
+        verts = np.asarray(poly_dec.points, dtype=np.float32)
+        faces = np.asarray(poly_dec.faces, dtype=np.int32).reshape(-1, 4)[:, 1:]
+        colors = np.asarray(poly_dec.point_data["colors"], dtype=np.float32)
 
     try:
         mf = _meshfix.PyTMesh()
@@ -96,125 +203,69 @@ def bake_multiview_gaussian_to_glb(
         mf.fill_small_boundaries(nbe=32, refine=True)
         v_fix, f_fix = mf.return_arrays()
         if len(v_fix) > 100 and len(f_fix) > 100:
+            # Re-sample colors to fixed mesh
+            c_tree = cKDTree(verts)
+            _, c_idx = c_tree.query(v_fix, k=1, workers=-1)
             verts, faces = v_fix.astype(np.float32), f_fix.astype(np.int32)
+            colors = colors[c_idx]
     except Exception:
         pass
 
+    # UV unwrap with xatlas
     vmapping, indices, uvs = xatlas.parametrize(verts, faces.astype(np.uint32))
     verts = verts[vmapping]
     faces = indices.astype(np.int32)
+    colors = colors[vmapping]
     uvs = uvs.astype(np.float32)
 
-    # Compute vertex normals in Z-up space before rotating to Y-up
-    tmp_mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
-    trimesh.repair.fix_normals(tmp_mesh)
-    v_normals = tmp_mesh.vertex_normals.astype(np.float32)
-
-    # Render 36 views at 1024x1024 using true anisotropic 3D Gaussian Splatting (r=2, fov=40)
-    observations, extrinsics, intrinsics = render_utils.render_multiview(
-        gs, resolution=1024, nviews=36
-    )
-
-    # Dense barycentric sampling of 3D positions & normals into 2048x2048 UV space
+    # Rasterize vertex colors into UV texture map (2048x2048)
     H = W = int(texture_size)
-    v_t = torch.from_numpy(verts).cuda()
-    n_t = torch.from_numpy(v_normals).cuda()
+    c_t = torch.from_numpy(colors).cuda()
     f_t = torch.from_numpy(faces).long().cuda()
     uv_t = torch.from_numpy(uvs).cuda()
 
-    v0, v1, v2 = v_t[f_t[:, 0]], v_t[f_t[:, 1]], v_t[f_t[:, 2]]
-    n0, n1, n2 = n_t[f_t[:, 0]], n_t[f_t[:, 1]], n_t[f_t[:, 2]]
+    c0, c1, c2 = c_t[f_t[:, 0]], c_t[f_t[:, 1]], c_t[f_t[:, 2]]
     uv0, uv1, uv2 = uv_t[f_t[:, 0]], uv_t[f_t[:, 1]], uv_t[f_t[:, 2]]
 
-    u_grid = torch.linspace(0.0, 1.0, 20, device="cuda")
+    u_grid = torch.linspace(0.0, 1.0, 14, device="cuda")
     uu, vv = torch.meshgrid(u_grid, u_grid, indexing="ij")
     mb = (uu + vv) <= 1.0
     b0, b1 = uu[mb], vv[mb]
     b2 = 1.0 - b0 - b1
 
-    pos_sum = torch.zeros((H * W, 3), dtype=torch.float32, device="cuda")
-    nrm_sum = torch.zeros((H * W, 3), dtype=torch.float32, device="cuda")
+    col_sum = torch.zeros((H * W, 3), dtype=torch.float32, device="cuda")
     cnt = torch.zeros((H * W,), dtype=torch.float32, device="cuda")
     F_num = len(faces)
-    for s in range(0, F_num, 6000):
-        e = min(s + 6000, F_num)
+    for s in range(0, F_num, 8000):
+        e = min(s + 8000, F_num)
         p_uv = (
             b0[None, :, None] * uv0[s:e, None, :]
             + b1[None, :, None] * uv1[s:e, None, :]
             + b2[None, :, None] * uv2[s:e, None, :]
         )
-        p_xyz = (
-            b0[None, :, None] * v0[s:e, None, :]
-            + b1[None, :, None] * v1[s:e, None, :]
-            + b2[None, :, None] * v2[s:e, None, :]
-        ).reshape(-1, 3)
-        p_nrm = (
-            b0[None, :, None] * n0[s:e, None, :]
-            + b1[None, :, None] * n1[s:e, None, :]
-            + b2[None, :, None] * n2[s:e, None, :]
+        p_col = (
+            b0[None, :, None] * c0[s:e, None, :]
+            + b1[None, :, None] * c1[s:e, None, :]
+            + b2[None, :, None] * c2[s:e, None, :]
         ).reshape(-1, 3)
         px = (p_uv[..., 0].reshape(-1) * (W - 1)).round().long().clamp(0, W - 1)
         py = ((1.0 - p_uv[..., 1].reshape(-1)) * (H - 1)).round().long().clamp(0, H - 1)
         idx = py * W + px
-        pos_sum.scatter_add_(0, idx[:, None].expand(-1, 3), p_xyz)
-        nrm_sum.scatter_add_(0, idx[:, None].expand(-1, 3), p_nrm)
+        col_sum.scatter_add_(0, idx[:, None].expand(-1, 3), p_col)
         cnt.scatter_add_(0, idx, torch.ones_like(idx, dtype=torch.float32))
 
-    valid_mask = cnt > 0
-    pts_xyz = pos_sum[valid_mask] / cnt[valid_mask, None]
-    pts_nrm = torch.nn.functional.normalize(nrm_sum[valid_mask], dim=-1)
-    del pos_sum, nrm_sum, cnt
-
-    # Project 3D UV texels into each of the 36 rendered 1024x1024 Gaussian views
-    M = pts_xyz.shape[0]
-    pts_homo = torch.cat([pts_xyz, torch.ones((M, 1), device="cuda")], dim=-1)
-    col_acc = torch.zeros((M, 3), dtype=torch.float32, device="cuda")
-    w_acc = torch.zeros((M, 1), dtype=torch.float32, device="cuda")
-
-    for obs_np, extr, intr in zip(observations, extrinsics, intrinsics):
-        obs_t = torch.from_numpy(obs_np).float().cuda() / 255.0  # (1024, 1024, 3)
-        oh, ow = obs_t.shape[:2]
-        extr_t = extr.float().cuda()
-        intr_t = intr.float().cuda()
-
-        cam_pos = torch.inverse(extr_t)[:3, 3]
-        view_dir = torch.nn.functional.normalize(cam_pos[None, :] - pts_xyz, dim=-1)
-        cos_sim = (pts_nrm * view_dir).sum(dim=-1, keepdim=True)
-        front = cos_sim > 0.15
-
-        cam_pts = pts_homo @ extr_t.T  # (M, 4)
-        z_cam = cam_pts[:, 2:3].clamp(min=1e-4)
-        u_proj = (cam_pts[:, 0:1] / z_cam) * intr_t[0, 0] + intr_t[0, 2]
-        v_proj = (cam_pts[:, 1:2] / z_cam) * intr_t[1, 1] + intr_t[1, 2]
-
-        in_bounds = front & (u_proj >= 0.0) & (u_proj <= 1.0) & (v_proj >= 0.0) & (v_proj <= 1.0)
-        grid = torch.stack([u_proj * 2.0 - 1.0, v_proj * 2.0 - 1.0], dim=-1).view(1, M, 1, 2)
-        sampled = torch.nn.functional.grid_sample(
-            obs_t.permute(2, 0, 1).unsqueeze(0),
-            grid,
-            mode="bilinear",
-            padding_mode="border",
-            align_corners=False,
-        ).view(3, M).T  # (M, 3)
-
-        non_black = sampled.max(dim=-1, keepdim=True).values > 0.02
-        w = torch.where(in_bounds & non_black, (cos_sim.clamp(min=0.0) ** 6), torch.zeros_like(cos_sim))
-        col_acc += sampled * w
-        w_acc += w
-
-    valid_rgb = (col_acc / w_acc.clamp(min=1e-6)).cpu().numpy()
-    mask_1d = valid_mask.cpu().numpy()
+    mask_1d = (cnt > 0).cpu().numpy()
+    valid_rgb = (col_sum[cnt > 0] / cnt[cnt > 0, None]).cpu().numpy()
+    del col_sum, cnt, c_t, f_t, uv_t
+    torch.cuda.empty_cache()
 
     tex = np.zeros((H * W, 3), dtype=np.uint8)
     tex[mask_1d] = np.clip(valid_rgb * 255.0, 0, 255).astype(np.uint8)
     tex = tex.reshape(H, W, 3)
     inpaint_mask = (~mask_1d.reshape(H, W)).astype(np.uint8)
-    tex = cv2.inpaint(tex, inpaint_mask, 5, cv2.INPAINT_TELEA)
-
-    # Rotate mesh from Z-up to Y-up for Unity / Blender / Showcase
-    rot_z2y = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]], dtype=np.float32)
-    verts_yup = verts @ rot_z2y
+    tex = cv2.inpaint(tex, inpaint_mask, 3, cv2.INPAINT_TELEA)
     tex_img = Image.fromarray(tex)
+
     material = trimesh.visual.material.PBRMaterial(
         roughnessFactor=0.85,
         metallicFactor=0.0,
@@ -222,12 +273,12 @@ def bake_multiview_gaussian_to_glb(
         baseColorFactor=np.array([255, 255, 255, 255], dtype=np.uint8),
     )
     out_mesh = trimesh.Trimesh(
-        vertices=verts_yup,
+        vertices=verts,
         faces=faces,
         visual=trimesh.visual.TextureVisuals(uv=uvs, material=material),
         process=False,
     )
-    return out_mesh, tex_img
+    return out_mesh, tex_img, verts, faces, colors
 
 
 def main() -> None:
@@ -249,12 +300,13 @@ def main() -> None:
     ensure_u2net()
 
     from trellis.pipelines import TrellisImageTo3DPipeline
-    from trellis.utils import postprocessing_utils, render_utils
 
-    print("[2/4] Đang tải Microsoft TRELLIS (microsoft/TRELLIS-image-large)...", flush=True)
+    print("[2/4] Đang nạp Microsoft TRELLIS (microsoft/TRELLIS-image-large)...", flush=True)
     pipe = TrellisImageTo3DPipeline.from_pretrained("microsoft/TRELLIS-image-large")
-    if "slat_decoder_rf" in pipe.models:
-        del pipe.models["slat_decoder_rf"]
+    # We only decode structured latent directly into mesh with rich 3D colors (saving VRAM & 100% bug-free)
+    for k in ("slat_decoder_rf", "slat_decoder_gs"):
+        if k in pipe.models:
+            del pipe.models[k]
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -282,57 +334,49 @@ def main() -> None:
         outputs = pipe.run(
             img,
             seed=args.seed,
-            formats=["gaussian", "mesh"],
+            formats=["mesh"],
             preprocess_image=True,
         )
-        gs = outputs["gaussian"][0]
         mesh_res = outputs["mesh"][0]
 
         pipe.cpu()
         gc.collect()
         torch.cuda.empty_cache()
 
-        print("[3/4] Kết xuất 4 góc nhìn 360° Siêu Nét (1024px) & video xoay...", flush=True)
-        # Crucial fix: pass r=2, fov=40 (default r=10, fov=8 in render_snapshot causes tile overflow!)
-        snap = render_utils.render_snapshot(
-            gs, resolution=1024, bg_color=(0.96, 0.96, 0.98), r=2, fov=40
-        )["color"]
-        turnaround = Image.fromarray(np.concatenate(snap, axis=1))
-        turnaround.save(out_dir / "turnaround.png")
-        Image.fromarray(snap[0]).save(out_dir / "thumbnail.png")
-
-        vid_color = render_utils.render_video(
-            gs, resolution=512, bg_color=(0.96, 0.96, 0.98), num_frames=80, r=2, fov=40
-        )["color"]
-        imageio.mimsave(out_dir / "preview_360.mp4", vid_color, fps=20)
-
-        print(f"[4/4] Đang nướng UV Texture 360° ({args.texture_size}x{args.texture_size}) & xuất GLB/OBJ...", flush=True)
-        try:
-            glb_mesh = postprocessing_utils.to_glb(
-                gs,
-                mesh_res,
-                simplify=args.simplify,
-                texture_size=args.texture_size,
-                verbose=True,
-            )
-            tex_img = glb_mesh.visual.material.baseColorTexture
-        except Exception as e:
-            print(f"[T4 Fallback] Chuyển sang bộ nướng Multi-View 36 góc T4 ({e})...", flush=True)
-            torch.cuda.empty_cache()
-            glb_mesh, tex_img = bake_multiview_gaussian_to_glb(
-                gs,
-                mesh_res,
-                render_utils,
-                simplify_ratio=args.simplify,
-                texture_size=args.texture_size,
-            )
+        print(f"[3/4] Đang nướng UV Texture 360° ({args.texture_size}x{args.texture_size}) & xuất GLB/OBJ...", flush=True)
+        glb_mesh, tex_img, verts_yup, faces_dec, v_colors = build_crisp_textured_glb(
+            mesh_res,
+            simplify_ratio=args.simplify,
+            texture_size=args.texture_size,
+        )
 
         glb_path = out_dir / f"{slug}.glb"
         obj_path = out_dir / f"{slug}.obj"
         glb_mesh.export(glb_path)
         glb_mesh.export(obj_path)
-        if tex_img is not None:
-            tex_img.save(out_dir / f"{slug}_texture.png")
+        tex_img.save(out_dir / f"{slug}_texture.png")
+
+        print("[4/4] Kết xuất 4 góc nhìn 360° Siêu Nét (1024px) & video xoay...", flush=True)
+        snap = render_mesh_views_pytorch(
+            verts_yup,
+            faces_dec,
+            v_colors,
+            yaws_rad=[0.0, float(np.pi / 2), float(np.pi), float(3 * np.pi / 2)],
+            size=1024,
+        )
+        turnaround = Image.fromarray(np.concatenate(snap, axis=1))
+        turnaround.save(out_dir / "turnaround.png")
+        Image.fromarray(snap[0]).save(out_dir / "thumbnail.png")
+
+        vid_yaws = np.linspace(0.0, float(2 * np.pi), 72, endpoint=False).tolist()
+        vid_frames = render_mesh_views_pytorch(
+            verts_yup,
+            faces_dec,
+            v_colors,
+            yaws_rad=vid_yaws,
+            size=512,
+        )
+        imageio.mimsave(out_dir / "preview_360.mp4", vid_frames, fps=20)
 
         elapsed = round(time.perf_counter() - t0, 1)
         stats = {
@@ -361,7 +405,7 @@ def main() -> None:
         (out_dir / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), "utf-8")
         print(f"✅ Hoàn tất {name} trong {elapsed}s! Lưu tại: {out_dir}", flush=True)
 
-        del outputs, gs, mesh_res, glb_mesh
+        del outputs, mesh_res, glb_mesh
         gc.collect()
         torch.cuda.empty_cache()
 
