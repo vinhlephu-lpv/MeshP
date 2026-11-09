@@ -26,9 +26,29 @@ if "/content/TRELLIS" not in sys.path:
 
 import imageio
 import numpy as np
+import subprocess
 import torch
 from huggingface_hub import hf_hub_download
 from PIL import Image
+
+# Bypass GitHub web 504 timeout inside torch.hub.load('facebookresearch/dinov2', ...)
+_orig_hub_load = torch.hub.load
+
+
+def _safe_hub_load(repo_or_dir, model, *args, **kwargs):
+    if repo_or_dir == "facebookresearch/dinov2":
+        local_dino = "/content/dinov2"
+        if not os.path.exists(f"{local_dino}/hubconf.py"):
+            subprocess.run(
+                ["git", "clone", "--depth", "1", "https://github.com/facebookresearch/dinov2.git", local_dino],
+                check=True,
+            )
+        kwargs["source"] = "local"
+        repo_or_dir = local_dino
+    return _orig_hub_load(repo_or_dir, model, *args, **kwargs)
+
+
+torch.hub.load = _safe_hub_load
 
 
 def _slug(text: str) -> str:
