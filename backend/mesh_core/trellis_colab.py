@@ -32,11 +32,11 @@ import pyvista as pv
 import torch
 import trimesh
 import trimesh.visual
+import utils3d
 import xatlas
 from huggingface_hub import hf_hub_download
 from PIL import Image
 from pymeshfix import _meshfix
-from scipy.spatial import cKDTree
 
 # Bypass GitHub web 504 timeout inside torch.hub.load('facebookresearch/dinov2', ...)
 _orig_hub_load = torch.hub.load
@@ -57,8 +57,6 @@ def _safe_hub_load(repo_or_dir, model, *args, **kwargs):
 
 torch.hub.load = _safe_hub_load
 
-SH_C0 = 0.28209479177387814
-
 
 def _slug(text: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9]+", "_", text.lower()).strip("_")
@@ -75,86 +73,18 @@ def ensure_u2net() -> None:
             shutil.copyfile(cached, dst)
 
 
-def render_gaussian_views_cuda(
-    g_xyz: np.ndarray,
-    g_rgb: np.ndarray,
-    g_opa: np.ndarray,
-    yaws_rad: list[float],
-    pitch_rad: float = 0.28,
-    size: int = 512,
-    bg_val: float = 0.95,
-) -> list[np.ndarray]:
-    """Pure-PyTorch CUDA 3D Gaussian Splatting renderer (works on all GPUs including Tesla T4 sm_75)."""
-    xyz_t = torch.from_numpy(g_xyz).float().cuda()
-    rgb_t = torch.from_numpy(g_rgb).float().cuda()
-    opa_t = torch.from_numpy(g_opa).float().cuda()
-
-    center = 0.5 * (xyz_t.min(dim=0).values + xyz_t.max(dim=0).values)
-    span = float((xyz_t.max(dim=0).values - xyz_t.min(dim=0).values).max().item())
-    xyz_c = (xyz_t - center) / max(span, 1e-6)
-
-    vis = opa_t > 0.12
-    xyz_c = xyz_c[vis]
-    rgb_c = rgb_t[vis]
-
-    cp, sp = float(np.cos(pitch_rad)), float(np.sin(pitch_rad))
-    rx = torch.tensor([[1.0, 0.0, 0.0], [0.0, cp, -sp], [0.0, sp, cp]], device="cuda")
-
-    frames = []
-    for yaw in yaws_rad:
-        cy, sy = float(np.cos(yaw)), float(np.sin(yaw))
-        ry = torch.tensor([[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]], device="cuda")
-        rot = rx @ ry
-        v = xyz_c @ rot.T
-
-        # Sort back-to-front along camera Z
-        order = torch.argsort(v[:, 2], descending=False)
-        vs = v[order]
-        cs = rgb_c[order]
-
-        px = ((vs[:, 0] * 0.80 + 0.5) * (size - 1)).round().long().clamp(2, size - 3)
-        py = ((-vs[:, 1] * 0.80 + 0.5) * (size - 1)).round().long().clamp(2, size - 3)
-
-        canvas = torch.full((size, size, 3), bg_val, dtype=torch.float32, device="cuda")
-        # Two-pass splat: outer 5x5 soft halo then inner 3x3 crisp core
-        for dy in (-2, -1, 0, 1, 2):
-            for dx in (-2, -1, 0, 1, 2):
-                if abs(dx) == 2 or abs(dy) == 2:
-                    canvas[py + dy, px + dx] = 0.5 * canvas[py + dy, px + dx] + 0.5 * cs
-        for dy in (-1, 0, 1):
-            for dx in (-1, 0, 1):
-                canvas[py + dy, px + dx] = cs
-
-        frame = np.clip(canvas.cpu().numpy() * 255.0, 0, 255).astype(np.uint8)
-        frames.append(frame)
-    return frames
-
-
-def bake_trellis_glb_t4(
+def bake_multiview_gaussian_to_glb(
     gs,
     mesh_res,
+    render_utils,
     simplify_ratio: float = 0.90,
     texture_size: int = 2048,
-) -> tuple[trimesh.Trimesh, Image.Image, np.ndarray, np.ndarray, np.ndarray]:
-    """Bake 360° 3D Gaussian appearance directly onto UV-unwrapped mesh in 3D space (T4-safe)."""
-    # 1. Extract 3D Gaussian attributes and rotate from Z-up to Y-up
-    rot_z2y = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]], dtype=np.float32)
-    g_xyz = gs.get_xyz.detach().cpu().numpy().astype(np.float32) @ rot_z2y
-    g_rgb = (
-        torch.clamp(gs._features_dc.squeeze(1) * SH_C0 + 0.5, 0.0, 1.0)
-        .detach()
-        .cpu()
-        .numpy()
-        .astype(np.float32)
-    )
-    g_opa = gs.get_opacity.squeeze(-1).detach().cpu().numpy().astype(np.float32)
-    g_scale = gs.get_scaling.mean(dim=-1).detach().cpu().numpy().astype(np.float32)
-
-    # 2. Extract and decimate mesh
-    verts = mesh_res.vertices.detach().cpu().numpy().astype(np.float32) @ rot_z2y
+) -> tuple[trimesh.Trimesh, Image.Image]:
+    """Multi-view projection of 1024x1024 3D Gaussian Splatting renders onto 2048x2048 UV texture."""
+    verts = mesh_res.vertices.detach().cpu().numpy().astype(np.float32)
     faces = mesh_res.faces.detach().cpu().numpy().astype(np.int32)
 
-    if 0.0 < simplify_ratio < 1.0 and len(faces) > 10000:
+    if 0.0 < simplify_ratio < 1.0 and len(faces) > 12000:
         pv_faces = np.hstack([np.full((len(faces), 1), 3, dtype=np.int32), faces])
         poly = pv.PolyData(verts, pv_faces).decimate(simplify_ratio)
         verts = np.asarray(poly.points, dtype=np.float32)
@@ -170,31 +100,44 @@ def bake_trellis_glb_t4(
     except Exception:
         pass
 
-    # 3. UV unwrap via xatlas
     vmapping, indices, uvs = xatlas.parametrize(verts, faces.astype(np.uint32))
     verts = verts[vmapping]
     faces = indices.astype(np.int32)
     uvs = uvs.astype(np.float32)
 
-    # 4. Rasterize 3D surface coordinates into UV space on GPU and query 3D Gaussians via cKDTree
+    # Compute vertex normals in Z-up space before rotating to Y-up
+    tmp_mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+    trimesh.repair.fix_normals(tmp_mesh)
+    v_normals = tmp_mesh.vertex_normals.astype(np.float32)
+
+    # Render 36 views at 1024x1024 using true anisotropic 3D Gaussian Splatting (r=2, fov=40)
+    observations, extrinsics, intrinsics = render_utils.render_multiview(
+        gs, resolution=1024, nviews=36
+    )
+
+    # Dense barycentric sampling of 3D positions & normals into 2048x2048 UV space
     H = W = int(texture_size)
     v_t = torch.from_numpy(verts).cuda()
+    n_t = torch.from_numpy(v_normals).cuda()
     f_t = torch.from_numpy(faces).long().cuda()
     uv_t = torch.from_numpy(uvs).cuda()
+
     v0, v1, v2 = v_t[f_t[:, 0]], v_t[f_t[:, 1]], v_t[f_t[:, 2]]
+    n0, n1, n2 = n_t[f_t[:, 0]], n_t[f_t[:, 1]], n_t[f_t[:, 2]]
     uv0, uv1, uv2 = uv_t[f_t[:, 0]], uv_t[f_t[:, 1]], uv_t[f_t[:, 2]]
 
-    u_grid = torch.linspace(0.0, 1.0, 14, device="cuda")
+    u_grid = torch.linspace(0.0, 1.0, 20, device="cuda")
     uu, vv = torch.meshgrid(u_grid, u_grid, indexing="ij")
     mb = (uu + vv) <= 1.0
     b0, b1 = uu[mb], vv[mb]
     b2 = 1.0 - b0 - b1
 
     pos_sum = torch.zeros((H * W, 3), dtype=torch.float32, device="cuda")
+    nrm_sum = torch.zeros((H * W, 3), dtype=torch.float32, device="cuda")
     cnt = torch.zeros((H * W,), dtype=torch.float32, device="cuda")
     F_num = len(faces)
-    for s in range(0, F_num, 8000):
-        e = min(s + 8000, F_num)
+    for s in range(0, F_num, 6000):
+        e = min(s + 6000, F_num)
         p_uv = (
             b0[None, :, None] * uv0[s:e, None, :]
             + b1[None, :, None] * uv1[s:e, None, :]
@@ -205,31 +148,73 @@ def bake_trellis_glb_t4(
             + b1[None, :, None] * v1[s:e, None, :]
             + b2[None, :, None] * v2[s:e, None, :]
         ).reshape(-1, 3)
+        p_nrm = (
+            b0[None, :, None] * n0[s:e, None, :]
+            + b1[None, :, None] * n1[s:e, None, :]
+            + b2[None, :, None] * n2[s:e, None, :]
+        ).reshape(-1, 3)
         px = (p_uv[..., 0].reshape(-1) * (W - 1)).round().long().clamp(0, W - 1)
         py = ((1.0 - p_uv[..., 1].reshape(-1)) * (H - 1)).round().long().clamp(0, H - 1)
         idx = py * W + px
         pos_sum.scatter_add_(0, idx[:, None].expand(-1, 3), p_xyz)
+        nrm_sum.scatter_add_(0, idx[:, None].expand(-1, 3), p_nrm)
         cnt.scatter_add_(0, idx, torch.ones_like(idx, dtype=torch.float32))
 
-    mask_1d = (cnt > 0).cpu().numpy()
-    valid_xyz = (pos_sum[cnt > 0] / cnt[cnt > 0, None]).cpu().numpy()
-    del pos_sum, cnt, v_t, f_t, uv_t
-    torch.cuda.empty_cache()
+    valid_mask = cnt > 0
+    pts_xyz = pos_sum[valid_mask] / cnt[valid_mask, None]
+    pts_nrm = torch.nn.functional.normalize(nrm_sum[valid_mask], dim=-1)
+    del pos_sum, nrm_sum, cnt
 
-    tree = cKDTree(g_xyz)
-    dists, idxs = tree.query(valid_xyz, k=12, workers=-1)
-    sigma = np.maximum(g_scale[idxs], 0.004)
-    w = g_opa[idxs] * np.exp(-0.5 * (dists / sigma) ** 2) + 1e-6
-    w /= w.sum(axis=1, keepdims=True)
-    valid_rgb = (g_rgb[idxs] * w[..., None]).sum(axis=1)
+    # Project 3D UV texels into each of the 36 rendered 1024x1024 Gaussian views
+    M = pts_xyz.shape[0]
+    pts_homo = torch.cat([pts_xyz, torch.ones((M, 1), device="cuda")], dim=-1)
+    col_acc = torch.zeros((M, 3), dtype=torch.float32, device="cuda")
+    w_acc = torch.zeros((M, 1), dtype=torch.float32, device="cuda")
+
+    for obs_np, extr, intr in zip(observations, extrinsics, intrinsics):
+        obs_t = torch.from_numpy(obs_np).float().cuda() / 255.0  # (1024, 1024, 3)
+        oh, ow = obs_t.shape[:2]
+        extr_t = extr.float().cuda()
+        intr_t = intr.float().cuda()
+
+        cam_pos = torch.inverse(extr_t)[:3, 3]
+        view_dir = torch.nn.functional.normalize(cam_pos[None, :] - pts_xyz, dim=-1)
+        cos_sim = (pts_nrm * view_dir).sum(dim=-1, keepdim=True)
+        front = cos_sim > 0.15
+
+        cam_pts = pts_homo @ extr_t.T  # (M, 4)
+        z_cam = cam_pts[:, 2:3].clamp(min=1e-4)
+        u_proj = (cam_pts[:, 0:1] / z_cam) * intr_t[0, 0] + intr_t[0, 2]
+        v_proj = (cam_pts[:, 1:2] / z_cam) * intr_t[1, 1] + intr_t[1, 2]
+
+        in_bounds = front & (u_proj >= 0.0) & (u_proj <= 1.0) & (v_proj >= 0.0) & (v_proj <= 1.0)
+        grid = torch.stack([u_proj * 2.0 - 1.0, v_proj * 2.0 - 1.0], dim=-1).view(1, M, 1, 2)
+        sampled = torch.nn.functional.grid_sample(
+            obs_t.permute(2, 0, 1).unsqueeze(0),
+            grid,
+            mode="bilinear",
+            padding_mode="border",
+            align_corners=False,
+        ).view(3, M).T  # (M, 3)
+
+        non_black = sampled.max(dim=-1, keepdim=True).values > 0.02
+        w = torch.where(in_bounds & non_black, (cos_sim.clamp(min=0.0) ** 6), torch.zeros_like(cos_sim))
+        col_acc += sampled * w
+        w_acc += w
+
+    valid_rgb = (col_acc / w_acc.clamp(min=1e-6)).cpu().numpy()
+    mask_1d = valid_mask.cpu().numpy()
 
     tex = np.zeros((H * W, 3), dtype=np.uint8)
     tex[mask_1d] = np.clip(valid_rgb * 255.0, 0, 255).astype(np.uint8)
     tex = tex.reshape(H, W, 3)
     inpaint_mask = (~mask_1d.reshape(H, W)).astype(np.uint8)
-    tex = cv2.inpaint(tex, inpaint_mask, 3, cv2.INPAINT_TELEA)
-    tex_img = Image.fromarray(tex)
+    tex = cv2.inpaint(tex, inpaint_mask, 5, cv2.INPAINT_TELEA)
 
+    # Rotate mesh from Z-up to Y-up for Unity / Blender / Showcase
+    rot_z2y = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]], dtype=np.float32)
+    verts_yup = verts @ rot_z2y
+    tex_img = Image.fromarray(tex)
     material = trimesh.visual.material.PBRMaterial(
         roughnessFactor=0.85,
         metallicFactor=0.0,
@@ -237,12 +222,12 @@ def bake_trellis_glb_t4(
         baseColorFactor=np.array([255, 255, 255, 255], dtype=np.uint8),
     )
     out_mesh = trimesh.Trimesh(
-        vertices=verts,
+        vertices=verts_yup,
         faces=faces,
         visual=trimesh.visual.TextureVisuals(uv=uvs, material=material),
         process=False,
     )
-    return out_mesh, tex_img, g_xyz, g_rgb, g_opa
+    return out_mesh, tex_img
 
 
 def main() -> None:
@@ -264,6 +249,7 @@ def main() -> None:
     ensure_u2net()
 
     from trellis.pipelines import TrellisImageTo3DPipeline
+    from trellis.utils import postprocessing_utils, render_utils
 
     print("[2/4] Đang tải Microsoft TRELLIS (microsoft/TRELLIS-image-large)...", flush=True)
     pipe = TrellisImageTo3DPipeline.from_pretrained("microsoft/TRELLIS-image-large")
@@ -306,34 +292,47 @@ def main() -> None:
         gc.collect()
         torch.cuda.empty_cache()
 
-        print(f"[3/4] Đang nướng UV Texture 360° ({args.texture_size}x{args.texture_size}) & xuất GLB/OBJ...", flush=True)
-        glb_mesh, tex_img, g_xyz, g_rgb, g_opa = bake_trellis_glb_t4(
-            gs,
-            mesh_res,
-            simplify_ratio=args.simplify,
-            texture_size=args.texture_size,
-        )
-        glb_path = out_dir / f"{slug}.glb"
-        obj_path = out_dir / f"{slug}.obj"
-        glb_mesh.export(glb_path)
-        glb_mesh.export(obj_path)
-        tex_img.save(out_dir / f"{slug}_texture.png")
-
-        print("[4/4] Kết xuất 4 góc nhìn 360° & video xoay...", flush=True)
-        snap = render_gaussian_views_cuda(
-            g_xyz,
-            g_rgb,
-            g_opa,
-            yaws_rad=[0.0, float(np.pi / 2), float(np.pi), float(3 * np.pi / 2)],
-            size=512,
-        )
+        print("[3/4] Kết xuất 4 góc nhìn 360° Siêu Nét (1024px) & video xoay...", flush=True)
+        # Crucial fix: pass r=2, fov=40 (default r=10, fov=8 in render_snapshot causes tile overflow!)
+        snap = render_utils.render_snapshot(
+            gs, resolution=1024, bg_color=(0.96, 0.96, 0.98), r=2, fov=40
+        )["color"]
         turnaround = Image.fromarray(np.concatenate(snap, axis=1))
         turnaround.save(out_dir / "turnaround.png")
         Image.fromarray(snap[0]).save(out_dir / "thumbnail.png")
 
-        vid_yaws = np.linspace(0.0, float(2 * np.pi), 72, endpoint=False).tolist()
-        vid_frames = render_gaussian_views_cuda(g_xyz, g_rgb, g_opa, yaws_rad=vid_yaws, size=512)
-        imageio.mimsave(out_dir / "preview_360.mp4", vid_frames, fps=20)
+        vid_color = render_utils.render_video(
+            gs, resolution=512, bg_color=(0.96, 0.96, 0.98), num_frames=80, r=2, fov=40
+        )["color"]
+        imageio.mimsave(out_dir / "preview_360.mp4", vid_color, fps=20)
+
+        print(f"[4/4] Đang nướng UV Texture 360° ({args.texture_size}x{args.texture_size}) & xuất GLB/OBJ...", flush=True)
+        try:
+            glb_mesh = postprocessing_utils.to_glb(
+                gs,
+                mesh_res,
+                simplify=args.simplify,
+                texture_size=args.texture_size,
+                verbose=True,
+            )
+            tex_img = glb_mesh.visual.material.baseColorTexture
+        except Exception as e:
+            print(f"[T4 Fallback] Chuyển sang bộ nướng Multi-View 36 góc T4 ({e})...", flush=True)
+            torch.cuda.empty_cache()
+            glb_mesh, tex_img = bake_multiview_gaussian_to_glb(
+                gs,
+                mesh_res,
+                render_utils,
+                simplify_ratio=args.simplify,
+                texture_size=args.texture_size,
+            )
+
+        glb_path = out_dir / f"{slug}.glb"
+        obj_path = out_dir / f"{slug}.obj"
+        glb_mesh.export(glb_path)
+        glb_mesh.export(obj_path)
+        if tex_img is not None:
+            tex_img.save(out_dir / f"{slug}_texture.png")
 
         elapsed = round(time.perf_counter() - t0, 1)
         stats = {
