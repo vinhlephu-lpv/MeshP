@@ -191,11 +191,16 @@ def build_crisp_textured_glb(
     # Decimate geometry while preserving vertex color sharpness
     if 0.0 < simplify_ratio < 1.0 and len(faces) > 12000:
         poly = pv.PolyData(verts, np.hstack([np.full((len(faces), 1), 3, dtype=np.int32), faces]))
-        poly.point_data["colors"] = colors
         poly_dec = poly.decimate(simplify_ratio)
-        verts = np.asarray(poly_dec.points, dtype=np.float32)
-        faces = np.asarray(poly_dec.faces, dtype=np.int32).reshape(-1, 4)[:, 1:]
-        colors = np.asarray(poly_dec.point_data["colors"], dtype=np.float32)
+        verts_dec = np.asarray(poly_dec.points, dtype=np.float32)
+        faces_dec = np.asarray(poly_dec.faces, dtype=np.int32).reshape(-1, 4)[:, 1:]
+
+        # Query colors for decimated vertices using cKDTree
+        c_tree = cKDTree(verts)
+        _, c_idx = c_tree.query(verts_dec, k=1, workers=-1)
+        verts = verts_dec
+        faces = faces_dec
+        colors = colors[c_idx]
 
     try:
         mf = _meshfix.PyTMesh()
