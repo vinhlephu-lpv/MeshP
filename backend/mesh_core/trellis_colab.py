@@ -38,6 +38,7 @@ import xatlas
 from huggingface_hub import hf_hub_download
 from PIL import Image
 from pymeshfix import _meshfix
+from scipy.spatial import cKDTree
 
 _orig_hub_load = torch.hub.load
 
