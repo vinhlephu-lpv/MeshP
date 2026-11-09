@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 # Mandatory environment variables for Tesla T4 (Turing sm_75) before importing trellis
+os.environ["MPLBACKEND"] = "Agg"
 os.environ["ATTN_BACKEND"] = "xformers"
 os.environ["SPARSE_ATTN_BACKEND"] = "xformers"
 os.environ["SPCONV_ALGO"] = "native"
